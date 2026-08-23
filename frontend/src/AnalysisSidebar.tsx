@@ -4,8 +4,6 @@ import { displaySymbol } from "./display";
 import { useTranslation } from "react-i18next";
 
 const timeframes=["weekly","daily","4hour"] as const;
-const labels:Record<string,string>={weekly:"周",daily:"日","4hour":"4H"};
-
 export default function AnalysisSidebar({symbol}:{symbol:string|null}){
   const {t,i18n}=useTranslation();
   const label=(tf:string)=>t(tf==="4hour"?"fourHour":tf);
@@ -25,38 +23,39 @@ export default function AnalysisSidebar({symbol}:{symbol:string|null}){
 
 function BottomDiagnosis({data}:{data:Diagnostics}){
   const {t}=useTranslation();
+  const timeframeLabel=(tf:string)=>t(tf==="4hour"?"fourHour":tf);
   const evidence:string[]=[];let confirmed=false,forming=false,breakout=false,extended=false,uptrend=false;
   for(const tf of timeframes){
     const periodFactors=data.factors.filter(f=>f.timeframe===tf);
     const active=new Set(periodFactors.filter(f=>f.triggered).map(f=>f.factor_id));
     if(active.has("F3")){
-      evidence.push(`${labels[tf]}线圆弧底`);
+      evidence.push(t("evidenceRoundBottom",{timeframe:timeframeLabel(tf)}));
       const f3=periodFactors.find(f=>f.factor_id==="F3");
       const rise=Number(f3?.details?.rise_from_vertex_pct);
       const age=Number(f3?.details?.bars_since_vertex);
       const confirmations=["F2","F4","F5"].filter(id=>active.has(id));
-      if(Number.isFinite(rise)&&rise>=35){extended=true;evidence.push(`${labels[tf]}线距拟合底部上涨 ${rise.toFixed(1)}%`)}
-      else if((Number.isFinite(rise)&&rise>=15)||(Number.isFinite(age)&&age>=24)){breakout=true;evidence.push(`${labels[tf]}线进入突破阶段`)}
-      else if(confirmations.length){confirmed=true;evidence.push(`${labels[tf]}线确认 ${confirmations.join("/")}`)}else forming=true;
+      if(Number.isFinite(rise)&&rise>=35){extended=true;evidence.push(t("evidenceRiseFromBottom",{timeframe:timeframeLabel(tf),value:rise.toFixed(1)}))}
+      else if((Number.isFinite(rise)&&rise>=15)||(Number.isFinite(age)&&age>=24)){breakout=true;evidence.push(t("evidenceBreakoutStage",{timeframe:timeframeLabel(tf)}))}
+      else if(confirmations.length){confirmed=true;evidence.push(t("evidenceConfirmation",{timeframe:timeframeLabel(tf),factors:confirmations.join("/")}))}else forming=true;
     }
     if(active.has("F1")&&active.has("F2")){
       const f2=periodFactors.find(f=>f.factor_id==="F2");
       const tunnelDistance=Number(f2?.details?.distance)*100;
-      if(Number.isFinite(tunnelDistance)&&tunnelDistance>=20){extended=true;evidence.push(`${labels[tf]}线已远离均线通道 ${tunnelDistance.toFixed(1)}%`)}
-      else if(Number.isFinite(tunnelDistance)&&tunnelDistance>=8){breakout=true;evidence.push(`${labels[tf]}线已脱离底部通道`)}
-      else {forming=true;evidence.push(`${labels[tf]}线 F1/F2 早期组合`)}
+      if(Number.isFinite(tunnelDistance)&&tunnelDistance>=20){extended=true;evidence.push(t("evidenceFarFromTunnel",{timeframe:timeframeLabel(tf),value:tunnelDistance.toFixed(1)}))}
+      else if(Number.isFinite(tunnelDistance)&&tunnelDistance>=8){breakout=true;evidence.push(t("evidenceLeftBottomTunnel",{timeframe:timeframeLabel(tf)}))}
+      else {forming=true;evidence.push(t("evidenceEarlyCombination",{timeframe:timeframeLabel(tf)}))}
     }
     const regime=periodFactors.find(f=>f.factor_id==="F5");
     const priceDistance=Number(regime?.details?.price_above_long_tunnel_pct);
     const emaDistance=Number(regime?.details?.ema12_above_long_tunnel_pct);
     if(Number.isFinite(priceDistance)&&Number.isFinite(emaDistance)&&priceDistance>=15&&emaDistance>=5){
       uptrend=true;
-      evidence.push(`${labels[tf]}线价格高于长期通道 ${priceDistance.toFixed(1)}%`);
+      evidence.push(t("evidenceAboveLongTunnel",{timeframe:timeframeLabel(tf),value:priceDistance.toFixed(1)}));
     }
   }
   const f3=data.factors.filter(f=>f.factor_id==="F3");
   const insufficient=f3.length>0&&f3.every(f=>f.reason==="insufficient_history");
   const state=extended?t("bottomExtended"):uptrend?t("bottomUptrend"):breakout?t("bottomBreakout"):confirmed?t("bottomConfirmed"):forming?t("bottomForming"):insufficient?t("insufficient"):t("notFormed");
   const tone=extended||uptrend||breakout?"advanced":confirmed?"confirmed":forming?"forming":insufficient?"insufficient":"none";
-  return <section className={`bottom-diagnosis ${tone}`}><header><span>{t("bottomDiagnosis")}</span><strong>{state}</strong></header><p>{evidence.length?evidence.join("；"):insufficient?t("insufficientBottom"):t("noBottomEvidence")}</p><small>{t("diagnosisNote")}</small></section>
+  return <section className={`bottom-diagnosis ${tone}`}><header><span>{t("bottomDiagnosis")}</span><strong>{state}</strong></header><p>{evidence.length?evidence.join(t("evidenceSeparator")):insufficient?t("insufficientBottom"):t("noBottomEvidence")}</p><small>{t("diagnosisNote")}</small></section>
 }
