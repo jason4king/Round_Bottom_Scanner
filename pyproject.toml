@@ -1,0 +1,30 @@
+[project]
+name = "round-bottom-scanner"
+version = "0.1.0"
+description = "Local LongPort-powered technical scanner"
+requires-python = ">=3.12"
+dependencies = [
+  "duckdb>=1.2,<2",
+  "exchange-calendars>=4.8,<5",
+  "fastapi>=0.115,<1",
+  "numpy>=1.26,<2.3",
+  "pandas>=2.2,<3",
+  "pyarrow>=18,<22",
+  "pydantic-settings>=2.7,<3",
+  "uvicorn[standard]>=0.34,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.28,<1",
+  "pytest>=8.3,<9",
+]
+longport = ["longport>=4.3.7,<5"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+exclude = ["frontend*", "tests*"]

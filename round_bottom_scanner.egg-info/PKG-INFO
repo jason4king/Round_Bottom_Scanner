@@ -1,0 +1,18 @@
+Metadata-Version: 2.4
+Name: round-bottom-scanner
+Version: 0.1.0
+Summary: Local LongPort-powered technical scanner
+Requires-Python: >=3.12
+Requires-Dist: duckdb<2,>=1.2
+Requires-Dist: exchange-calendars<5,>=4.8
+Requires-Dist: fastapi<1,>=0.115
+Requires-Dist: numpy<2.3,>=1.26
+Requires-Dist: pandas<3,>=2.2
+Requires-Dist: pyarrow<22,>=18
+Requires-Dist: pydantic-settings<3,>=2.7
+Requires-Dist: uvicorn[standard]<1,>=0.34
+Provides-Extra: dev
+Requires-Dist: httpx<1,>=0.28; extra == "dev"
+Requires-Dist: pytest<9,>=8.3; extra == "dev"
+Provides-Extra: longport
+Requires-Dist: longport<4,>=3; extra == "longport"
