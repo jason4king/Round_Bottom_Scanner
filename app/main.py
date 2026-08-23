@@ -188,7 +188,7 @@ def get_latest_results() -> list[ScanResultItem]:
     with database.connect(read_only=True) as connection:
         rows = connection.execute(
             """
-            SELECT r.symbol, r.total_score, r.triggered_factors_json, r.data_status
+            SELECT r.symbol, r.total_score, r.triggered_factors_json, r.data_status, r.run_id
             FROM scan_results r
             JOIN scan_runs s ON s.run_id = r.run_id
             WHERE s.run_type = 'official' AND s.status IN ('completed', 'completed_with_errors')
@@ -199,12 +199,20 @@ def get_latest_results() -> list[ScanResultItem]:
             ORDER BY r.total_score DESC, r.symbol
             """
         ).fetchall()
+        patterns={};classic_patterns={}
+        for row in rows:
+            pattern=connection.execute("SELECT timeframe,details_json FROM factor_results WHERE run_id=? AND symbol=? AND factor_id='F7' AND triggered ORDER BY CAST(json_extract(details_json,'$.confidence') AS DOUBLE) DESC LIMIT 1",[row[4],row[0]]).fetchone()
+            if pattern:patterns[row[0]]={**json.loads(pattern[1]),"timeframe":pattern[0]}
+            classic=connection.execute("SELECT timeframe,factor_id,signal_name,details_json FROM factor_results WHERE run_id=? AND symbol=? AND factor_id LIKE 'P%' AND triggered ORDER BY timeframe,factor_id",[row[4],row[0]]).fetchall()
+            classic_patterns[row[0]]=[{"timeframe":item[0],"pattern_id":item[1],"signal_name":item[2],**json.loads(item[3])} for item in classic]
     return [
         ScanResultItem(
             symbol=row[0],
             total_score=row[1],
             triggered_factors=json.loads(row[2]),
             data_status=row[3],
+            f7_pattern=patterns.get(row[0]),
+            classic_patterns=classic_patterns.get(row[0],[]),
         )
         for row in rows
     ]

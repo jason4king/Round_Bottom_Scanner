@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     tail_refresh_bars: int = 3
     auto_backfill_new_symbols: bool = True
     deduplicate_unchanged_results: bool = True
-    algorithm_version: str = "legacy-extracted-v1"
+    algorithm_version: str = "cup-handle-v2-patternpy-observer-v5"
     config_version: str = "v2-weekly-close"
 
     longport_app_key: str | None = None

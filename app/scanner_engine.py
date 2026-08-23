@@ -6,6 +6,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from app.json_utils import json_safe
+from app.patternpy_observer import observe_classic_patterns
 
 
 @dataclass
@@ -19,6 +20,7 @@ class FactorResult:
 
 
 BASE_SCORES = {"F2": 3, "F3": 4, "F4": 1, "F5": 4, "F6": 1}
+SCORING_FACTOR_IDS = tuple(f"F{i}" for i in range(1, 7))
 F1_SCORES = {"A": 4, "B": 3, "C": 2}
 TIMEFRAME_MULTIPLIERS = {
     frozenset(("weekly", "daily", "4hour")): 6.0,
@@ -77,21 +79,33 @@ def detect_f2(b: pd.DataFrame) -> FactorResult:
 
 
 def detect_f3(b: pd.DataFrame) -> FactorResult:
-    if len(b) < 60: return _result("F3", "Round Bottom", b, False, {"reason": "insufficient_history", "required": 60, "actual": len(b)})
-    y = b.Close.iloc[-60:].to_numpy(float); x = np.arange(60, dtype=float); a, slope, intercept = np.polyfit(x, y, 2); fitted = np.polyval((a, slope, intercept), x)
-    total = float(((y-y.mean())**2).sum()); r2 = 1-float(((y-fitted)**2).sum())/total if total else 0.0
-    vertex = float(-slope/(2*a)) if a else float("inf")
-    vertex_price = float(np.polyval((a, slope, intercept), vertex)) if np.isfinite(vertex) else float("nan")
-    current_price = float(y[-1])
-    rise_from_vertex = (current_price / vertex_price - 1.0) if np.isfinite(vertex_price) and vertex_price > 0 else float("nan")
-    bars_since_vertex = float(59 - vertex) if np.isfinite(vertex) else float("nan")
-    triggered = a > 0 and r2 >= .7 and 12 <= vertex <= 48
-    return _result("F3", "Round Bottom", b, triggered, {
-        "curvature": float(a), "r_squared": r2, "vertex_x": vertex,
-        "vertex_price": vertex_price, "current_price": current_price,
-        "rise_from_vertex_pct": rise_from_vertex * 100,
-        "bars_since_vertex": bars_since_vertex, "window": 60,
-        "reason": None if triggered else "fit_requirements_not_met",
+    windows = (60, 120, 180)
+    if len(b) < windows[0]: return _result("F3", "Round Bottom", b, False, {"reason": "insufficient_history", "required": windows[0], "actual": len(b)})
+    candidates=[]
+    for window in windows:
+        if len(b) < window: continue
+        sample=b.iloc[-window:]; y=sample.Close.to_numpy(float); x=np.arange(window,dtype=float)
+        a,slope,intercept=np.polyfit(x,y,2); fitted=np.polyval((a,slope,intercept),x)
+        total=float(((y-y.mean())**2).sum()); r2=1-float(((y-fitted)**2).sum())/total if total else 0.0
+        vertex=float(-slope/(2*a)) if a else float("inf")
+        vertex_price=float(np.polyval((a,slope,intercept),vertex)) if np.isfinite(vertex) else float("nan")
+        current_price=float(y[-1]); rise=(current_price/vertex_price-1.0) if np.isfinite(vertex_price) and vertex_price>0 else float("nan")
+        bars_since_vertex=float(window-1-vertex) if np.isfinite(vertex) else float("nan")
+        valid=bool(a>0 and r2>=.7 and .2*window<=vertex<=.8*window)
+        vertex_position=int(np.clip(round(vertex),0,window-1)) if np.isfinite(vertex) else None
+        candidates.append({
+            "window":window,"curvature":float(a),"r_squared":r2,"vertex_x":vertex,
+            "vertex_price":vertex_price,"current_price":current_price,
+            "rise_from_vertex_pct":rise*100,"bars_since_vertex":bars_since_vertex,
+            "vertex_timestamp":sample.index[vertex_position].isoformat() if vertex_position is not None else None,
+            "window_start_timestamp":sample.index[0].isoformat(),"valid":valid,
+        })
+    valid_candidates=[candidate for candidate in candidates if candidate["valid"]]
+    selected=max(valid_candidates or candidates,key=lambda candidate:candidate["r_squared"])
+    return _result("F3", "Round Bottom", b, bool(valid_candidates), {
+        **{key:value for key,value in selected.items() if key!="valid"},
+        "candidate_windows":candidates,
+        "reason":None if valid_candidates else "fit_requirements_not_met",
     })
 
 
@@ -132,15 +146,69 @@ def detect_f6(b: pd.DataFrame) -> FactorResult:
     return _result("F6","Volume Surge",b,triggered,{"actual_ratio":ratio,"reason":None if triggered else "volume_ratio_not_met"})
 
 
-DETECTORS=(detect_f1,detect_f2,detect_f3,detect_f4,detect_f5,detect_f6)
+def detect_f7(b: pd.DataFrame) -> FactorResult:
+    """Detect a textbook cup-and-handle structure; observational only."""
+    if len(b)<60:return _result("F7","Cup and Handle",b,False,{"reason":"insufficient_history","required":60,"actual":len(b)})
+    candidates=[]
+    for window in (60,120,180):
+        if len(b)<window:continue
+        whole=b.iloc[-window:]
+        for handle_length in (5,10,15,20,25,30):
+            if handle_length>=window*.3:continue
+            cup=whole.iloc[:-handle_length]; handle=whole.iloc[-handle_length:]
+            close=cup.Close.to_numpy(float); n=len(cup)
+            left_end=max(3,int(n*.25)); right_start=min(n-2,int(n*.75))
+            left_idx=int(np.argmax(close[:left_end])); right_idx=right_start+int(np.argmax(close[right_start:]))
+            cup_span=right_idx-left_idx
+            if cup_span<30:continue
+            segment=close[left_idx:right_idx+1]; bottom_rel=int(np.argmin(segment)); bottom_idx=left_idx+bottom_rel
+            if not left_idx+.2*cup_span<=bottom_idx<=left_idx+.8*cup_span:continue
+            left_rim=float(close[left_idx]);right_rim=float(close[right_idx]);rim=(left_rim+right_rim)/2;bottom=float(close[bottom_idx])
+            if rim<=0:continue
+            depth=(rim-bottom)/rim;rim_diff=abs(left_rim-right_rim)/rim;recovery=right_rim/left_rim if left_rim else 0
+            x=np.arange(len(segment),dtype=float);a,slope,intercept=np.polyfit(x,segment,2);fit=np.polyval((a,slope,intercept),x)
+            total=float(((segment-segment.mean())**2).sum());r2=1-float(((segment-fit)**2).sum())/total if total else 0
+            left_duration=bottom_idx-left_idx;right_duration=right_idx-bottom_idx
+            symmetry=min(left_duration,right_duration)/max(left_duration,right_duration) if max(left_duration,right_duration) else 0
+            bottom_threshold=bottom+(rim-bottom)*.08
+            bottom_dwell=int((segment<=bottom_threshold).sum());minimum_dwell=max(3,int(cup_span*.10))
+            handle_low=float(handle.Low.min());handle_drawdown=max((right_rim-handle_low)/right_rim,0) if right_rim else 1
+            consolidation=handle.iloc[:-1] if len(handle)>5 else handle
+            pre_handle_volume=float(cup.Volume.iloc[-min(20,len(cup)):].mean());handle_volume=float(consolidation.Volume.mean())
+            handle_volume_ratio=handle_volume/pre_handle_volume if pre_handle_volume else float("inf")
+            cup_valid=a>0 and r2>=.55 and .12<=depth<=.33 and rim_diff<=.10 and .90<=recovery<=1.05 and symmetry>=.5 and bottom_dwell>=minimum_dwell
+            handle_valid=handle_drawdown<=min(.15,depth/3) and float(handle.Close.min())>bottom+(rim-bottom)*.5 and handle_volume_ratio<=.85
+            if not cup_valid:continue
+            handle_for_line=handle.iloc[:-1] if len(handle)>2 else handle
+            hx=np.arange(len(handle_for_line),dtype=float);handle_slope,handle_intercept=np.polyfit(hx,handle_for_line.High.to_numpy(float),1)
+            handle_resistance=float(handle_slope*(len(handle)-1)+handle_intercept)
+            neckline=max(left_rim,right_rim);breakout_level=max(neckline,handle_resistance)
+            current=float(whole.Close.iloc[-1]);prior_volume=float(whole.Volume.iloc[-21:-1].mean()) if len(whole)>=21 else 0
+            volume_ratio=float(whole.Volume.iloc[-1])/prior_volume if prior_volume else 0
+            if handle_valid and current>=breakout_level*1.01 and volume_ratio>=1.5:stage="breakout_confirmed"
+            elif handle_valid and current>=breakout_level*.97:stage="breakout_ready"
+            elif handle_valid:stage="handle_forming"
+            else:stage="cup_complete"
+            confidence=min(100,max(0,20*min(r2/.8,1)+15*max(0,1-rim_diff/.10)+10*symmetry+10*min(bottom_dwell/max(minimum_dwell,1),1)+10*(1 if .12<=depth<=.33 else 0)+15*(1 if handle_valid else 0)+10*min(max(1-handle_volume_ratio,0)/.3,1)+10*min(volume_ratio/1.5,1)))
+            candidates.append({"window":window,"stage":stage,"confidence":confidence,"cup_r_squared":r2,"cup_depth_pct":depth*100,"rim_difference_pct":rim_diff*100,"cup_symmetry":symmetry,"bottom_dwell_bars":bottom_dwell,"left_rim_price":left_rim,"right_rim_price":right_rim,"bottom_price":bottom,"neckline_price":neckline,"handle_resistance":handle_resistance,"breakout_level":breakout_level,"handle_length":handle_length,"handle_drawdown_pct":handle_drawdown*100,"handle_volume_ratio":handle_volume_ratio,"breakout_volume_ratio":volume_ratio,"left_rim_timestamp":cup.index[left_idx].isoformat(),"bottom_timestamp":cup.index[bottom_idx].isoformat(),"right_rim_timestamp":cup.index[right_idx].isoformat()})
+    if not candidates:return _result("F7","Cup and Handle",b,False,{"reason":"cup_requirements_not_met"})
+    stage_rank={"cup_complete":1,"handle_forming":2,"breakout_ready":3,"breakout_confirmed":4}
+    selected=max(candidates,key=lambda c:(stage_rank[c["stage"]],c["confidence"]))
+    return _result("F7","Cup and Handle",b,selected["confidence"]>=60,{**selected,"candidate_count":len(candidates),"scored":False,"reason":None if selected["confidence"]>=60 else "confidence_not_met"})
+
+
+DETECTORS=(detect_f1,detect_f2,detect_f3,detect_f4,detect_f5,detect_f6,detect_f7)
 
 
 def scan_symbol(symbol: str, timeframe_bars: dict[str,pd.DataFrame]) -> dict[str,Any]:
     tf_results={}
     for timeframe,bars in timeframe_bars.items():
         enriched=add_indicators(bars); factors={r.factor_id:r for r in (fn(enriched) for fn in DETECTORS)}
+        for observed in observe_classic_patterns(enriched):
+            result=_result(observed["pattern_id"],observed["signal_name"],enriched,observed["triggered"],observed["details"])
+            factors[result.factor_id]=result
         tf_results[timeframe]={"factors":factors,"triggered":{fid for fid,r in factors.items() if r.triggered},"bar_timestamp":enriched.index[-1].isoformat()}
-    periods_by_factor={fid:frozenset(tf for tf,v in tf_results.items() if fid in v["triggered"]) for fid in (f"F{i}" for i in range(1,7))}
+    periods_by_factor={fid:frozenset(tf for tf,v in tf_results.items() if fid in v["triggered"]) for fid in SCORING_FACTOR_IDS}
     contributions={}; base_total=0.
     for fid,periods in periods_by_factor.items():
         if not periods: continue
@@ -148,7 +216,8 @@ def scan_symbol(symbol: str, timeframe_bars: dict[str,pd.DataFrame]) -> dict[str
             tiers=[tf_results[tf]["factors"][fid].tier for tf in periods]; base=max(F1_SCORES[t] for t in tiers if t)
         else: base=BASE_SCORES[fid]
         multiplier=TIMEFRAME_MULTIPLIERS[periods]; contributions[fid]={"base_score":base,"multiplier":multiplier,"score":base*multiplier}; base_total+=base*multiplier
-    confluence={tf:_confluence(v["triggered"],v["factors"].get("F1")) for tf,v in tf_results.items()}; confluence_total=sum(x["score"] for x in confluence.values()); all_factors=set().union(*(v["triggered"] for v in tf_results.values())); coverage=10. if all_factors=={f"F{i}" for i in range(1,7)} else 1.; pre=base_total+confluence_total
+    scoring_triggered={tf:v["triggered"]&set(SCORING_FACTOR_IDS) for tf,v in tf_results.items()}
+    confluence={tf:_confluence(scoring_triggered[tf],v["factors"].get("F1")) for tf,v in tf_results.items()}; confluence_total=sum(x["score"] for x in confluence.values()); all_factors=set().union(*scoring_triggered.values()); coverage=10. if all_factors==set(SCORING_FACTOR_IDS) else 1.; pre=base_total+confluence_total
     return {"symbol":symbol,"timeframes":{tf:{"bar_timestamp":v["bar_timestamp"],"factors":{k:asdict(x) for k,x in v["factors"].items()}} for tf,v in tf_results.items()},"scoring":{"contributions":contributions,"confluence":confluence,"base_total":base_total,"confluence_total":confluence_total,"pre_multiplier_score":pre,"coverage_multiplier":coverage,"total_score":pre*coverage},"triggered_factors":sorted(all_factors)}
 
 

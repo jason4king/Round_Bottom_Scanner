@@ -14,6 +14,7 @@ type Tab = (typeof tabs)[number];
 
 type StockRow = ScanResult & { hasResult: boolean };
 type UiMessage={key:string;values?:Record<string,number|string>}|{raw:string};
+type ResultView="scores"|"roundBottom"|"cupHandle"|"classic";
 
 export default function App() {
   const {t,i18n}=useTranslation();
@@ -24,6 +25,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>("chart");
   const [query, setQuery] = useState("");
   const [minimumScore, setMinimumScore] = useState(0);
+  const [resultView,setResultView]=useState<ResultView>("scores");
   const [message, setMessage] = useState<UiMessage>({key:"connecting"});
   const [busy, setBusy] = useState(false);
   const [activeRun, setActiveRun] = useState<string | null>(null);
@@ -72,12 +74,15 @@ export default function App() {
         const result = bySymbol.get(symbol);
         return result
           ? { ...result, hasResult: true }
-          : { symbol, total_score: 0, triggered_factors: [], data_status: "等待扫描", hasResult: false };
+          : { symbol, total_score: 0, triggered_factors: [], data_status: "等待扫描", f7_pattern:null, classic_patterns:[], hasResult: false };
       })
       .filter((row) => row.symbol.includes(query.trim().toUpperCase()))
       .filter((row) => row.total_score >= minimumScore)
+      .filter((row)=>resultView!=="roundBottom"||row.hasResult&&row.triggered_factors.includes("F3"))
+      .filter((row)=>resultView!=="cupHandle"||row.hasResult&&Boolean(row.f7_pattern))
+      .filter((row)=>resultView!=="classic"||row.hasResult&&row.classic_patterns.length>0)
       .sort((a, b) => b.total_score - a.total_score || a.symbol.localeCompare(b.symbol));
-  }, [minimumScore, query, results, symbols]);
+  }, [minimumScore, query, resultView, results, symbols]);
 
   const selectedRow = rows.find((row) => row.symbol === selected) ?? null;
 
@@ -147,8 +152,10 @@ export default function App() {
                 <option value={50}>50+</option>
               </select>
             </label>
-            <button className="quiet-button">{t("roundBottom")}</button>
-            <button className="quiet-button">{t("multiPeriod")}</button>
+            <button aria-pressed={resultView==="roundBottom"} className={`quiet-button ${resultView==="roundBottom"?"active round-bottom-active":""}`} onClick={()=>setResultView("roundBottom")}>{t("roundBottom")}</button>
+            <button aria-pressed={resultView==="cupHandle"} className={`quiet-button ${resultView==="cupHandle"?"active":""}`} onClick={()=>setResultView("cupHandle")}>{t("cupHandle")}</button>
+            <button aria-pressed={resultView==="classic"} className={`quiet-button ${resultView==="classic"?"active classic-active":""}`} onClick={()=>setResultView("classic")}>{t("classicPatterns")}</button>
+            <button aria-pressed={resultView==="scores"} className={`quiet-button ${resultView==="scores"?"active":""}`} onClick={()=>setResultView("scores")}>{t("multiPeriod")}</button>
           </div>
 
           <div className="scan-note">{"raw" in message?message.raw:t(message.key,message.values)}</div>
@@ -166,6 +173,8 @@ export default function App() {
                 </span>
                 <span className="stock-score">{row.hasResult ? row.total_score.toFixed(0) : "—"}</span>
                 <span className={`data-state ${row.data_status === "正常" ? "good" : ""}`}>{row.data_status === "正常"?t("normal"):row.data_status === "等待扫描"?t("waitingScan"):row.data_status}</span>
+                {row.f7_pattern&&<span className={`f7-badge ${row.f7_pattern.stage}`}><b>F7</b><span>{t(`f7.${row.f7_pattern.stage}`)}</span><em>{t(row.f7_pattern.timeframe==="4hour"?"fourHour":row.f7_pattern.timeframe)} · {row.f7_pattern.confidence.toFixed(0)}%</em></span>}
+                {resultView==="classic"&&row.classic_patterns.slice(0,3).map(pattern=><span className="classic-badge" key={`${pattern.timeframe}-${pattern.pattern_id}`}><b>{pattern.pattern_id}</b><span>{t(`pattern.${pattern.pattern_name}`,{defaultValue:pattern.pattern_name})}</span><em>{t(pattern.timeframe==="4hour"?"fourHour":pattern.timeframe)}</em></span>)}
               </button>
             ))}
           </div>

@@ -11,6 +11,7 @@ dependencies = [
   "pandas>=2.2,<3",
   "pyarrow>=18,<22",
   "pydantic-settings>=2.7,<3",
+  "patternpy @ git+https://github.com/keithorange/PatternPy.git@2b1f29b17986acafffeb32c83e772417d540c100",
   "uvicorn[standard]>=0.34,<1",
 ]
 

@@ -18,6 +18,8 @@ export type ScanResult = {
   total_score: number;
   triggered_factors: string[];
   data_status: string;
+  f7_pattern: {stage:"cup_complete"|"handle_forming"|"breakout_ready"|"breakout_confirmed";confidence:number;timeframe:string} | null;
+  classic_patterns: {timeframe:string;pattern_id:string;signal_name:string;pattern_name:string;detected_timestamp:string;bars_ago:number}[];
 };
 
 export type ScanStatus = {
