@@ -35,7 +35,10 @@ export type ChartBar = {
   timestamp: string;
   open: number; high: number; low: number; close: number; volume: number;
   ema12: number; ema144: number; ema169: number; ema576: number; ema676: number;
-  macd_dif: number; macd_dea: number; macd_hist: number;
+  rsi: number | null; rsi_signal: number | null;
+  rsi_w_bottom: boolean; rsi_bullish_divergence: boolean; rsi_order_block_confluence: boolean; bullish_order_block_distance_pct: number | null; rsi_enhanced_buy: boolean;
+  rsi_breakout_buy: boolean; rsi_v_bottom_buy: boolean; rsi_neckline: number | null; rsi_stop_level: number | null;
+  rsi_breakout_volume_ratio: number | null;
   trend_support: number | null; trend_resistance: number | null;
   is_closed: boolean;
 };
@@ -47,6 +50,11 @@ export type BarsResponse = {
   adjustment_type: "forward";
   trade_session: "all";
   count: number;
+  market_structure: {
+    trend:"bullish"|"bearish"|"neutral";
+    levels:{kind:"strong_high"|"weak_high"|"strong_low"|"weak_low";price:number;start_timestamp:string}[];
+    order_blocks:{bias:"bullish"|"bearish";top:number;bottom:number;start_timestamp:string;confirmed_at_timestamp:string;end_timestamp:string|null;active:boolean}[];
+  };
   bars: ChartBar[];
 };
 

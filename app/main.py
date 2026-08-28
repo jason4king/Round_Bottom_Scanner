@@ -27,6 +27,7 @@ from app.schemas import (
 from app.watchlist import load_watchlist, save_watchlist
 from app.watchlist import normalize_symbol
 from app.scanner_engine import add_indicators
+from app.market_structure import calculate_market_structure
 from trendline_indicator import add_trendline_channels
 
 
@@ -248,7 +249,10 @@ def get_symbol_bars(
     # Compute long EMAs over the full cached history, then trim the response.
     chart = bars.set_index("timestamp_utc")
     chart = add_indicators(chart.rename(columns={"close": "Close"}))
-    chart = add_trendline_channels(chart, lookback=240, peak_distance=5).tail(limit)
+    chart = add_trendline_channels(chart, lookback=240, peak_distance=5)
+    structure_radius = {"weekly": 15, "daily": 20, "4hour": 12}[timeframe]
+    market_structure = calculate_market_structure(chart, pivot_radius=structure_radius)
+    chart = chart.tail(limit)
     payload = []
     for timestamp, row in chart.iterrows():
         payload.append({
@@ -259,8 +263,18 @@ def get_symbol_bars(
             "ema12": float(row["EMA12"]), "ema144": float(row["EMA144"]),
             "ema169": float(row["EMA169"]), "ema576": float(row["EMA576"]),
             "ema676": float(row["EMA676"]),
-            "macd_dif": float(row["MACD_DIF"]), "macd_dea": float(row["MACD_DEA"]),
-            "macd_hist": float(row["MACD_HIST"]),
+            "rsi": float(row["RSI10"]) if pd.notna(row["RSI10"]) else None,
+            "rsi_signal": float(row["RSI_SIGNAL10"]) if pd.notna(row["RSI_SIGNAL10"]) else None,
+            "rsi_w_bottom": bool(row["RSI_W_BOTTOM"]),
+            "rsi_bullish_divergence": bool(row["RSI_BULL_DIVERGENCE"]),
+            "rsi_order_block_confluence": bool(row["RSI_ORDER_BLOCK_CONFLUENCE"]),
+            "bullish_order_block_distance_pct": float(row["BULLISH_OB_DISTANCE_PCT"]) if pd.notna(row["BULLISH_OB_DISTANCE_PCT"]) else None,
+            "rsi_enhanced_buy": bool(row["RSI_ENHANCED_BUY"]),
+            "rsi_breakout_buy": bool(row["RSI_BREAKOUT_BUY"]),
+            "rsi_v_bottom_buy": bool(row["RSI_V_BOTTOM_BUY"]),
+            "rsi_neckline": float(row["RSI_NECKLINE"]) if pd.notna(row["RSI_NECKLINE"]) else None,
+            "rsi_stop_level": float(row["RSI_STOP_LEVEL"]) if pd.notna(row["RSI_STOP_LEVEL"]) else None,
+            "rsi_breakout_volume_ratio": float(row["RSI_BREAKOUT_VOLUME_RATIO"]) if pd.notna(row["RSI_BREAKOUT_VOLUME_RATIO"]) else None,
             "trend_support": float(row["trend_support"]) if math.isfinite(float(row["trend_support"])) else None,
             "trend_resistance": float(row["trend_resistance"]) if math.isfinite(float(row["trend_resistance"])) else None,
             "is_closed": bool(row["is_closed"]),
@@ -272,6 +286,7 @@ def get_symbol_bars(
         "adjustment_type": "forward",
         "trade_session": "all",
         "count": len(payload),
+        "market_structure": market_structure,
         "bars": payload,
     }
 

@@ -15,6 +15,19 @@ type Tab = (typeof tabs)[number];
 type StockRow = ScanResult & { hasResult: boolean };
 type UiMessage={key:string;values?:Record<string,number|string>}|{raw:string};
 type ResultView="scores"|"roundBottom"|"cupHandle"|"classic";
+type SortOrder="scoreDesc"|"scoreAsc"|"symbolAsc"|"symbolDesc";
+
+function savedSortOrder():SortOrder{
+  const saved=localStorage.getItem("scanner-stock-sort");
+  return saved==="scoreAsc"||saved==="symbolAsc"||saved==="symbolDesc"?saved:"scoreDesc";
+}
+
+function savedFavorites():string[]{
+  try{
+    const value=JSON.parse(localStorage.getItem("scanner-favorite-symbols")??"[]");
+    return Array.isArray(value)?value.filter((symbol):symbol is string=>typeof symbol==="string"):[];
+  }catch{return []}
+}
 
 export default function App() {
   const {t,i18n}=useTranslation();
@@ -24,8 +37,10 @@ export default function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("chart");
   const [query, setQuery] = useState("");
-  const [minimumScore, setMinimumScore] = useState(0);
+  const [sortOrder,setSortOrder]=useState<SortOrder>(savedSortOrder);
   const [resultView,setResultView]=useState<ResultView>("scores");
+  const [favorites,setFavorites]=useState<string[]>(savedFavorites);
+  const [favoriteOnly,setFavoriteOnly]=useState(false);
   const [message, setMessage] = useState<UiMessage>({key:"connecting"});
   const [busy, setBusy] = useState(false);
   const [activeRun, setActiveRun] = useState<string | null>(null);
@@ -77,12 +92,17 @@ export default function App() {
           : { symbol, total_score: 0, triggered_factors: [], data_status: "等待扫描", f7_pattern:null, classic_patterns:[], hasResult: false };
       })
       .filter((row) => row.symbol.includes(query.trim().toUpperCase()))
-      .filter((row) => row.total_score >= minimumScore)
+      .filter((row)=>!favoriteOnly||favorites.includes(row.symbol))
       .filter((row)=>resultView!=="roundBottom"||row.hasResult&&row.triggered_factors.includes("F3"))
       .filter((row)=>resultView!=="cupHandle"||row.hasResult&&Boolean(row.f7_pattern))
       .filter((row)=>resultView!=="classic"||row.hasResult&&row.classic_patterns.length>0)
-      .sort((a, b) => b.total_score - a.total_score || a.symbol.localeCompare(b.symbol));
-  }, [minimumScore, query, resultView, results, symbols]);
+      .sort((a,b)=>{
+        if(sortOrder==="scoreAsc")return a.total_score-b.total_score||a.symbol.localeCompare(b.symbol);
+        if(sortOrder==="symbolAsc")return a.symbol.localeCompare(b.symbol);
+        if(sortOrder==="symbolDesc")return b.symbol.localeCompare(a.symbol);
+        return b.total_score-a.total_score||a.symbol.localeCompare(b.symbol);
+      });
+  }, [favoriteOnly, favorites, query, resultView, results, sortOrder, symbols]);
 
   const selectedRow = rows.find((row) => row.symbol === selected) ?? null;
 
@@ -105,6 +125,16 @@ export default function App() {
     setMessage({key:"watchlistSaved",values:{count:updated.length}});
   }
 
+  function toggleFavorite(symbol:string){
+    setFavorites(current=>{
+      const next=current.includes(symbol)?current.filter(item=>item!==symbol):[...current,symbol];
+      localStorage.setItem("scanner-favorite-symbols",JSON.stringify(next));
+      return next;
+    });
+  }
+
+  const favoriteCount=favorites.filter(symbol=>symbols.includes(symbol)).length;
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -114,6 +144,9 @@ export default function App() {
             <strong>{t("appTitle")}</strong>
             <small>{t("appSubtitle")}</small>
           </div>
+        </div>
+        <div className="scan-note topbar-scan" role="status" aria-live="polite">
+          {"raw" in message?message.raw:t(message.key,message.values)}
         </div>
         <div className="system-state">
           <StatusDot ok={Boolean(status?.longport_configured)} />
@@ -134,22 +167,26 @@ export default function App() {
               <p className="eyebrow">WATCHLIST</p>
               <h1>{t("watchlistScore")}</h1>
             </div>
-            <span className="count-badge">{rows.length}</span>
+            <div className="watchlist-counts">
+              <button type="button" className={`favorite-count ${favoriteOnly?"active":""}`} onClick={()=>setFavoriteOnly(true)} title={t("showFavorites")} aria-label={t("showFavorites")}>★ {favoriteCount}</button>
+              <button type="button" className={`count-badge ${!favoriteOnly?"active":""}`} onClick={()=>setFavoriteOnly(false)} title={t("showAllStocks")} aria-label={t("showAllStocks")}>{symbols.length}</button>
+            </div>
           </div>
 
-          <label className="search-box">
+          <div className="search-box">
             <span>⌕</span>
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("search")} />
-          </label>
+            <input aria-label={t("search")} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("search")} />
+            {query&&<button type="button" className="search-clear" aria-label={t("clearSearch")} title={t("clearSearch")} onClick={()=>setQuery("")}>×</button>}
+          </div>
 
           <div className="filters">
             <label>
-              {t("minimum")}
-              <select value={minimumScore} onChange={(event) => setMinimumScore(Number(event.target.value))}>
-                <option value={0}>{t("unlimited")}</option>
-                <option value={10}>10+</option>
-                <option value={25}>25+</option>
-                <option value={50}>50+</option>
+              {t("sortBy")}
+              <select value={sortOrder} onChange={(event)=>{const next=event.target.value as SortOrder;setSortOrder(next);localStorage.setItem("scanner-stock-sort",next)}}>
+                <option value="scoreDesc">{t("sortScoreDesc")}</option>
+                <option value="scoreAsc">{t("sortScoreAsc")}</option>
+                <option value="symbolAsc">{t("sortSymbolAsc")}</option>
+                <option value="symbolDesc">{t("sortSymbolDesc")}</option>
               </select>
             </label>
             <button aria-pressed={resultView==="roundBottom"} className={`quiet-button ${resultView==="roundBottom"?"active round-bottom-active":""}`} onClick={()=>setResultView("roundBottom")}>{t("roundBottom")}</button>
@@ -158,24 +195,25 @@ export default function App() {
             <button aria-pressed={resultView==="scores"} className={`quiet-button ${resultView==="scores"?"active":""}`} onClick={()=>setResultView("scores")}>{t("multiPeriod")}</button>
           </div>
 
-          <div className="scan-note">{"raw" in message?message.raw:t(message.key,message.values)}</div>
-
           <div className="stock-list">
             {rows.map((row) => (
-              <button
+              <div
                 className={`stock-row ${selected === row.symbol ? "selected" : ""}`}
                 key={row.symbol}
                 onClick={() => setSelected(row.symbol)}
+                onKeyDown={(event)=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();setSelected(row.symbol)}}}
+                role="button"
+                tabIndex={0}
               >
                 <span className="stock-main">
-                  <strong>{displaySymbol(row.symbol)}</strong>
+                  <span className="stock-symbol-line"><strong>{displaySymbol(row.symbol)}</strong><button type="button" className={`stock-favorite ${favorites.includes(row.symbol)?"active":""}`} onClick={(event)=>{event.stopPropagation();toggleFavorite(row.symbol)}} aria-label={favorites.includes(row.symbol)?t("removeFavorite"):t("addFavorite")} title={favorites.includes(row.symbol)?t("removeFavorite"):t("addFavorite")}>★</button></span>
                   <small>{row.triggered_factors.length ? row.triggered_factors.join(" · ") : t("waitingFactors")}</small>
                 </span>
                 <span className="stock-score">{row.hasResult ? row.total_score.toFixed(0) : "—"}</span>
                 <span className={`data-state ${row.data_status === "正常" ? "good" : ""}`}>{row.data_status === "正常"?t("normal"):row.data_status === "等待扫描"?t("waitingScan"):row.data_status}</span>
                 {row.f7_pattern&&<span className={`f7-badge ${row.f7_pattern.stage}`}><b>F7</b><span>{t(`f7.${row.f7_pattern.stage}`)}</span><em>{t(row.f7_pattern.timeframe==="4hour"?"fourHour":row.f7_pattern.timeframe)} · {row.f7_pattern.confidence.toFixed(0)}%</em></span>}
                 {resultView==="classic"&&row.classic_patterns.slice(0,3).map(pattern=><span className="classic-badge" key={`${pattern.timeframe}-${pattern.pattern_id}`}><b>{pattern.pattern_id}</b><span>{t(`pattern.${pattern.pattern_name}`,{defaultValue:pattern.pattern_name})}</span><em>{t(pattern.timeframe==="4hour"?"fourHour":pattern.timeframe)}</em></span>)}
-              </button>
+              </div>
             ))}
           </div>
         </aside>
