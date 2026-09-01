@@ -11,6 +11,21 @@ from app.scanner_engine import scan_symbol
 from app.watchlist import load_watchlist
 from app.json_utils import json_safe
 
+# 4-hour bars close irregularly (session boundaries, not fixed clock ticks) and
+# can land up to ~5-6 per trading day. settings.tail_refresh_bars=3 is sized
+# for daily/weekly (~1 new bar between syncs) and is too small here: if more
+# than 3 bars close between two syncs, the older ones are skipped forever
+# since the fetch only asks LongPort for the most recent N. Use a generous
+# multi-day buffer instead so an irregular sync cadence can't create gaps.
+FOUR_HOUR_TAIL_REFRESH_BARS = 30
+
+
+def _tail_refresh_count(settings: Settings, timeframe: str) -> int:
+    if timeframe == "4hour":
+        return max(settings.tail_refresh_bars, FOUR_HOUR_TAIL_REFRESH_BARS)
+    return settings.tail_refresh_bars
+
+
 class ScanService:
     def __init__(self,settings:Settings,database:Database,provider:LongPortProvider,repository:ParquetBarRepository):
         self.settings=settings; self.database=database; self.provider=provider; self.repository=repository
@@ -39,7 +54,7 @@ class ScanService:
             cached = self.repository.read(symbol, tf)
             desired_session = "all" if tf == "4hour" else "intraday"
             session_mismatch = not cached.empty and str(cached.iloc[-1].get("trade_session", "all")) != desired_session
-            request_count = self.settings.bars_per_timeframe if cached.empty or session_mismatch else self.settings.tail_refresh_bars
+            request_count = self.settings.bars_per_timeframe if cached.empty or session_mismatch else _tail_refresh_count(self.settings, tf)
             merged = self.repository.merge(symbol, tf, self.provider.fetch_bars(symbol, tf, request_count), replace_session=session_mismatch)
             self._save_manifest(symbol, tf, merged)
             updated[tf] = len(merged)
@@ -72,7 +87,7 @@ class ScanService:
                         if tf in sync_timeframes and (session_mismatch or cache_needs_sync(cached,tf)):
                             if cached.empty and not self.settings.auto_backfill_new_symbols:
                                 raise ValueError(f"{tf} 没有本地 K 线，且自动补全已关闭")
-                            request_count = self.settings.bars_per_timeframe if cached.empty or session_mismatch else self.settings.tail_refresh_bars
+                            request_count = self.settings.bars_per_timeframe if cached.empty or session_mismatch else _tail_refresh_count(self.settings, tf)
                             merged=self.repository.merge(symbol,tf,self.provider.fetch_bars(symbol,tf,request_count),replace_session=session_mismatch); self._save_manifest(symbol,tf,merged)
                         else:
                             merged=cached
