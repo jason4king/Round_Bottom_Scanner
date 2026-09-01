@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     network_proxy_enabled: bool = False
     network_proxy_host: str = "127.0.0.1"
     network_proxy_port: int = 7890
+    webhook_qiyeweixin: str | None = None
 
     @property
     def longport_configured(self) -> bool:

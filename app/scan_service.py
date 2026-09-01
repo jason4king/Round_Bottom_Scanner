@@ -16,6 +16,16 @@ class ScanService:
         self.settings=settings; self.database=database; self.provider=provider; self.repository=repository
         self._lock=threading.Lock(); self._active_run_id:UUID|None=None
 
+    @property
+    def active(self) -> bool:
+        with self._lock:
+            return self._active_run_id is not None
+
+    def run_results(self, run_id: UUID) -> dict[str, dict]:
+        with self.database.connect(read_only=True) as c:
+            rows = c.execute("SELECT symbol,total_score,triggered_factors_json FROM scan_results WHERE run_id=?",[run_id]).fetchall()
+        return {row[0]: {"total_score": row[1], "triggered_factors": json.loads(row[2])} for row in rows}
+
     def create_run(self,run_type:str,sync_timeframes:tuple[str,...]=TIMEFRAMES)->tuple[UUID,str,str]:
         with self._lock:
             if self._active_run_id:return self._active_run_id,"running","已有扫描任务正在运行"

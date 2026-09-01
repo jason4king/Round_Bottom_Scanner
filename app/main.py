@@ -14,6 +14,7 @@ from app.config import get_settings
 from app.database import Database
 from app.market_data import LongPortProvider, ParquetBarRepository, _is_closed
 from app.scan_service import ScanService
+from app.scheduler import DailyPushScheduler
 from app.schemas import (
     ScanCreateRequest,
     ScanCreateResponse,
@@ -36,11 +37,13 @@ database = Database(settings.database_path)
 provider = LongPortProvider(settings.longport_configured, settings.longport_app_key, settings.longport_app_secret, settings.longport_access_token, settings.longport_auth_mode, settings.longport_oauth_client_id, settings.longport_region, settings.network_proxy_enabled, settings.network_proxy_host, settings.network_proxy_port)
 repository = ParquetBarRepository(settings.parquet_root, settings.cache_retention_bars)
 scan_service = ScanService(settings, database, provider, repository)
+daily_push_scheduler = DailyPushScheduler(settings, scan_service, repository)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     database.initialize()
+    daily_push_scheduler.start()
     try:
         yield
     finally:
