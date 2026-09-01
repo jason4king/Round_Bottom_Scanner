@@ -164,7 +164,7 @@ export default function App() {
         </div>
         <select className="language-switch" aria-label={t("language")} value={i18n.language.startsWith("en")?"en-US":"zh-CN"} onChange={e=>setLanguage(e.target.value as "zh-CN"|"en-US")}><option value="zh-CN">中文</option><option value="en-US">English</option></select>
         <button className="primary-action" disabled={busy} onClick={startScan}>
-          {busy ? t("scanning") : t("scan")}
+          {busy ? t("scanning") : t("localScan")}
         </button>
       </header>
 

@@ -19,7 +19,7 @@ class ScanService:
     def create_run(self,run_type:str,sync_timeframes:tuple[str,...]=TIMEFRAMES)->tuple[UUID,str,str]:
         with self._lock:
             if self._active_run_id:return self._active_run_id,"running","已有扫描任务正在运行"
-            if not self.provider.configured:raise RuntimeError("LongPort 凭据尚未配置")
+            if sync_timeframes and not self.provider.configured:raise RuntimeError("LongPort 凭据尚未配置")
             symbols=load_watchlist(self.settings.watchlist_path).symbols; run_id=uuid4()
             invalid=set(sync_timeframes)-set(TIMEFRAMES)
             if invalid:raise ValueError(f"Unsupported sync timeframes: {sorted(invalid)}")
@@ -31,7 +31,7 @@ class ScanService:
     def _execute(self,run_id:UUID,run_type:str,symbols:list[str],sync_timeframes:tuple[str,...]=TIMEFRAMES)->None:
         succeeded=failed=0; errors=[]; cutoff=None; status="failed"
         try:
-            if self.settings.longport_auth_mode.lower() == "oauth":
+            if sync_timeframes and self.settings.longport_auth_mode.lower() == "oauth":
                 self.provider.ensure_authenticated()
             for symbol in symbols:
                 try:

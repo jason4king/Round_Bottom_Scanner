@@ -92,10 +92,8 @@ export const api = {
   }),
   latestResults: () => request<ScanResult[]>("/api/v1/results/latest"),
   createScan: () =>
-    request<{ run_id: string; status: string; message: string }>("/api/v1/scans", {
+    request<{ run_id: string; status: string; message: string }>("/api/v1/scans/local", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ run_type: "official" }),
     }),
   scanStatus: (runId: string) => request<ScanStatus>(`/api/v1/scans/${runId}`),
   bars: (symbol: string, timeframe: string, limit = 500) =>

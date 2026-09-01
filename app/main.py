@@ -192,6 +192,16 @@ def create_scoped_sync(scope: str) -> ScanCreateResponse:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return ScanCreateResponse(run_id=str(run_id), status=status, message=message)
 
+
+@app.post("/api/v1/scans/local", response_model=ScanCreateResponse, status_code=202)
+def create_local_scan() -> ScanCreateResponse:
+    """Run an official scan using only bars already stored in Parquet."""
+    try:
+        run_id, status, message = scan_service.create_run("official", ())
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return ScanCreateResponse(run_id=str(run_id), status=status, message=message)
+
 @app.get("/api/v1/scans/{run_id}")
 def get_scan(run_id: str):
     from uuid import UUID
