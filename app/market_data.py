@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 from urllib.parse import quote
@@ -116,8 +117,16 @@ class LongPortProvider:
         rows=[]
         for candle in candles:
             timestamp=pd.Timestamp(candle.timestamp)
-            if timestamp.tzinfo is None: timestamp=timestamp.tz_localize("UTC")
-            else: timestamp=timestamp.tz_convert("UTC")
+            if timestamp.tzinfo is None:
+                # The SDK returns a naive datetime that represents the calling
+                # process's local wall-clock time, not UTC (confirmed: on a
+                # UTC-configured host it's correct, on a UTC+8 host every
+                # timestamp lands 8h ahead). Interpret it as local time and
+                # convert properly instead of assuming it's already UTC.
+                local_tzinfo = datetime.now().astimezone().tzinfo
+                timestamp = timestamp.tz_localize(local_tzinfo).tz_convert("UTC")
+            else:
+                timestamp=timestamp.tz_convert("UTC")
             is_closed = _is_closed(timestamp, timeframe, now)
             rows.append({"symbol":symbol,"timeframe":timeframe,"timestamp_utc":timestamp,"open":float(candle.open),"high":float(candle.high),"low":float(candle.low),"close":float(candle.close),"volume":float(candle.volume),"is_closed":is_closed,"adjustment_type":"forward","trade_session":trade_session_name,"data_source":"LongPort","updated_at":now})
         return pd.DataFrame(rows,columns=BAR_COLUMNS)
