@@ -284,8 +284,9 @@ def validate_bars(frame: pd.DataFrame, symbol: str, timeframe: str) -> pd.DataFr
         raise ValueError("K 线证券代码或周期与请求不一致")
     if set(result["adjustment_type"]) != {"forward"}:
         raise ValueError("K 线必须使用前复权")
-    if set(result["trade_session"]) != {"all"}:
-        raise ValueError("K 线必须包含盘前、盘中和盘后")
+    expected_session = "all" if timeframe == "4hour" else "intraday"
+    if set(result["trade_session"]) != {expected_session}:
+        raise ValueError(f"K 线交易时段必须为 {expected_session}")
     result["timestamp_utc"] = pd.to_datetime(result["timestamp_utc"], utc=True)
     result["updated_at"] = pd.to_datetime(result["updated_at"], utc=True)
     return result.sort_values("timestamp_utc").reset_index(drop=True)

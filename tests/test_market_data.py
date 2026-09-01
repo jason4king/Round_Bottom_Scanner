@@ -8,7 +8,7 @@ def sample_frame() -> pd.DataFrame:
     return pd.DataFrame([{
         "symbol":"AAPL.US","timeframe":"daily","timestamp_utc":now,
         "open":100.0,"high":102.0,"low":99.0,"close":101.0,"volume":1000.0,
-        "is_closed":True,"adjustment_type":"forward","trade_session":"all",
+        "is_closed":True,"adjustment_type":"forward","trade_session":"intraday",
         "data_source":"LongPort","updated_at":now,
     }],columns=BAR_COLUMNS)
 
