@@ -47,9 +47,11 @@ export default function App() {
   const [activeRun, setActiveRun] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([api.status(), api.watchlist(), api.latestResults()])
-      .then(([systemStatus, watchlist, latest]) => {
-        setStatus(systemStatus);
+    api.status()
+      .then(setStatus)
+      .catch((error: Error) => setMessage({raw:error.message}));
+    Promise.all([api.watchlist(), api.latestResults()])
+      .then(([watchlist, latest]) => {
         setSymbols(watchlist.symbols);
         setResults(latest);
         setSelected(latest[0]?.symbol ?? watchlist.symbols[0] ?? null);
