@@ -185,23 +185,6 @@ def create_scan(request: ScanCreateRequest) -> ScanCreateResponse:
     return ScanCreateResponse(run_id=str(run_id), status=status, message=message)
 
 
-@app.post("/api/v1/sync/{scope}", response_model=ScanCreateResponse, status_code=202)
-def create_scoped_sync(scope: str) -> ScanCreateResponse:
-    scopes = {
-        "4hour": ("4hour",),
-        "daily-weekly": ("daily", "weekly"),
-        "market-close": ("weekly", "daily", "4hour"),
-    }
-    sync_timeframes = scopes.get(scope)
-    if sync_timeframes is None:
-        raise HTTPException(status_code=404, detail="不支持的同步周期")
-    try:
-        run_id, status, message = scan_service.create_run("official", sync_timeframes)
-    except (RuntimeError, ValueError) as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return ScanCreateResponse(run_id=str(run_id), status=status, message=message)
-
-
 @app.post("/api/v1/scans/local", response_model=ScanCreateResponse, status_code=202)
 def create_local_scan() -> ScanCreateResponse:
     """Run an official scan using only bars already stored in Parquet."""
