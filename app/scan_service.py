@@ -16,17 +16,19 @@ class ScanService:
         self.settings=settings; self.database=database; self.provider=provider; self.repository=repository
         self._lock=threading.Lock(); self._active_run_id:UUID|None=None
 
-    def create_run(self,run_type:str)->tuple[UUID,str,str]:
+    def create_run(self,run_type:str,sync_timeframes:tuple[str,...]=TIMEFRAMES)->tuple[UUID,str,str]:
         with self._lock:
             if self._active_run_id:return self._active_run_id,"running","已有扫描任务正在运行"
             if not self.provider.configured:raise RuntimeError("LongPort 凭据尚未配置")
             symbols=load_watchlist(self.settings.watchlist_path).symbols; run_id=uuid4()
-            cfg={"initial_bars_per_timeframe":self.settings.bars_per_timeframe,"tail_refresh_bars":self.settings.tail_refresh_bars,"timeframes":list(TIMEFRAMES),"adjustment_type":"forward","trade_session":"all","closed_bars_only":run_type=="official","auth_mode":self.settings.longport_auth_mode}; cfg_json=json.dumps(cfg,sort_keys=True); cfg_hash=hashlib.sha256(cfg_json.encode()).hexdigest()
+            invalid=set(sync_timeframes)-set(TIMEFRAMES)
+            if invalid:raise ValueError(f"Unsupported sync timeframes: {sorted(invalid)}")
+            cfg={"initial_bars_per_timeframe":self.settings.bars_per_timeframe,"tail_refresh_bars":self.settings.tail_refresh_bars,"timeframes":list(TIMEFRAMES),"sync_timeframes":list(sync_timeframes),"adjustment_type":"forward","trade_session":"all","closed_bars_only":run_type=="official","auth_mode":self.settings.longport_auth_mode}; cfg_json=json.dumps(cfg,sort_keys=True); cfg_hash=hashlib.sha256(cfg_json.encode()).hexdigest()
             with self.database.connect() as c:c.execute("INSERT INTO scan_runs (run_id,run_type,status,started_at,algorithm_version,config_version,config_json,config_hash,watchlist_json,symbols_total) VALUES (?,?,'running',?,?,?,?,?,?,?)",[run_id,run_type,datetime.now(timezone.utc),self.settings.algorithm_version,self.settings.config_version,cfg_json,cfg_hash,json.dumps(symbols),len(symbols)])
-            self._active_run_id=run_id; threading.Thread(target=self._execute,args=(run_id,run_type,symbols),daemon=True).start()
+            self._active_run_id=run_id; threading.Thread(target=self._execute,args=(run_id,run_type,symbols,sync_timeframes),daemon=True).start()
             return run_id,"running","行情同步与扫描已开始"
 
-    def _execute(self,run_id:UUID,run_type:str,symbols:list[str])->None:
+    def _execute(self,run_id:UUID,run_type:str,symbols:list[str],sync_timeframes:tuple[str,...]=TIMEFRAMES)->None:
         succeeded=failed=0; errors=[]; cutoff=None; status="failed"
         try:
             if self.settings.longport_auth_mode.lower() == "oauth":
@@ -36,10 +38,12 @@ class ScanService:
                     frames={}
                     for tf in TIMEFRAMES:
                         cached=self.repository.read(symbol,tf)
-                        if cache_needs_sync(cached,tf):
+                        desired_session="all" if tf=="4hour" else "intraday"
+                        session_mismatch=not cached.empty and str(cached.iloc[-1].get("trade_session","all"))!=desired_session
+                        if tf in sync_timeframes and (session_mismatch or cache_needs_sync(cached,tf)):
                             if cached.empty and not self.settings.auto_backfill_new_symbols:
                                 raise ValueError(f"{tf} 没有本地 K 线，且自动补全已关闭")
-                            request_count = self.settings.tail_refresh_bars if not cached.empty else self.settings.bars_per_timeframe
+                            request_count = self.settings.bars_per_timeframe if cached.empty or session_mismatch else self.settings.tail_refresh_bars
                             merged=self.repository.merge(symbol,tf,self.provider.fetch_bars(symbol,tf,request_count)); self._save_manifest(symbol,tf,merged)
                         else:
                             merged=cached
@@ -61,7 +65,8 @@ class ScanService:
             with self._lock:self._active_run_id=None
 
     def _save_manifest(self,symbol,tf,bars):
-        with self.database.connect() as c:c.execute("INSERT OR REPLACE INTO market_cache_manifest VALUES (?,?,?,?,?,?,?,?,?,?,?)",[symbol,tf,str(self.repository.path_for(symbol,tf)),len(bars),bars.timestamp_utc.min(),bars.timestamp_utc.max(),"forward","all","ok",datetime.now(timezone.utc),None])
+        trade_session="all" if tf=="4hour" else "intraday"
+        with self.database.connect() as c:c.execute("INSERT OR REPLACE INTO market_cache_manifest VALUES (?,?,?,?,?,?,?,?,?,?,?)",[symbol,tf,str(self.repository.path_for(symbol,tf)),len(bars),bars.timestamp_utc.min(),bars.timestamp_utc.max(),"forward",trade_session,"ok",datetime.now(timezone.utc),None])
 
     def _save_result(self,run_id,result):
         s=result["scoring"]; t=result["timeframes"]

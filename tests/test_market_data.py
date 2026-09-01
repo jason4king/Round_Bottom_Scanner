@@ -45,11 +45,18 @@ def test_default_repository_does_not_trim_history(tmp_path: Path):
     merged=repository.merge("AAPL.US","daily",pd.concat(frames,ignore_index=True))
     assert len(merged)==1601
 
-def test_current_week_closes_after_friday_extended_session():
+def test_current_week_closes_after_friday_regular_session():
     bar=pd.Timestamp("2026-08-17T12:00:00Z")
-    assert not _is_closed(bar,"weekly",pd.Timestamp("2026-08-21T22:00:00Z"))
-    assert _is_closed(bar,"weekly",pd.Timestamp("2026-08-22T01:00:00Z"))
+    assert not _is_closed(bar,"weekly",pd.Timestamp("2026-08-21T19:59:00Z"))
+    assert _is_closed(bar,"weekly",pd.Timestamp("2026-08-21T20:01:00Z"))
     assert _is_closed(bar,"weekly",pd.Timestamp("2026-08-23T03:00:00Z"))
+
+def test_daily_sync_becomes_due_after_regular_close():
+    frame=sample_frame()
+    frame["timestamp_utc"]=pd.Timestamp("2026-08-20T12:00:00Z")
+    frame["updated_at"]=pd.Timestamp("2026-08-20T20:10:00Z")
+    assert not cache_needs_sync(frame,"daily",pd.Timestamp("2026-08-21T19:59:00Z"))
+    assert cache_needs_sync(frame,"daily",pd.Timestamp("2026-08-21T20:15:00Z"))
 
 def test_daily_cache_skips_sync_when_latest_completed_day_exists():
     frame=sample_frame()

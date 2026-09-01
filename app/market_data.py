@@ -109,7 +109,9 @@ class LongPortProvider:
         from longport.openapi import AdjustType, Period, TradeSessions
         self.ensure_authenticated()
         periods = {"weekly": Period.Week, "daily": Period.Day, "4hour": Period.Min_240}
-        candles = self._context.candlesticks(symbol, periods[timeframe], count, AdjustType.ForwardAdjust, TradeSessions.All)
+        trade_sessions = TradeSessions.All if timeframe == "4hour" else TradeSessions.Intraday
+        trade_session_name = "all" if timeframe == "4hour" else "intraday"
+        candles = self._context.candlesticks(symbol, periods[timeframe], count, AdjustType.ForwardAdjust, trade_sessions)
         now = pd.Timestamp.now(tz="UTC")
         rows=[]
         for candle in candles:
@@ -117,7 +119,7 @@ class LongPortProvider:
             if timestamp.tzinfo is None: timestamp=timestamp.tz_localize("UTC")
             else: timestamp=timestamp.tz_convert("UTC")
             is_closed = _is_closed(timestamp, timeframe, now)
-            rows.append({"symbol":symbol,"timeframe":timeframe,"timestamp_utc":timestamp,"open":float(candle.open),"high":float(candle.high),"low":float(candle.low),"close":float(candle.close),"volume":float(candle.volume),"is_closed":is_closed,"adjustment_type":"forward","trade_session":"all","data_source":"LongPort","updated_at":now})
+            rows.append({"symbol":symbol,"timeframe":timeframe,"timestamp_utc":timestamp,"open":float(candle.open),"high":float(candle.high),"low":float(candle.low),"close":float(candle.close),"volume":float(candle.volume),"is_closed":is_closed,"adjustment_type":"forward","trade_session":trade_session_name,"data_source":"LongPort","updated_at":now})
         return pd.DataFrame(rows,columns=BAR_COLUMNS)
 
     def fetch_security_names(self, symbols: list[str]) -> dict[str, dict[str, str | None]]:
@@ -138,24 +140,26 @@ class LongPortProvider:
 def _is_closed(timestamp: pd.Timestamp, timeframe: str, now: pd.Timestamp) -> bool:
     if timeframe == "4hour": return timestamp + pd.Timedelta(hours=4) <= now
     ny_now=now.tz_convert("America/New_York"); ny_bar=timestamp.tz_convert("America/New_York")
-    if timeframe == "daily": return ny_bar.date() < ny_now.date() or (ny_bar.date()==ny_now.date() and ny_now.hour>=20)
+    if timeframe == "daily":
+        if ny_bar.date() < ny_now.date(): return True
+        if ny_bar.date() > ny_now.date(): return False
+        session=pd.Timestamp(ny_bar.date())
+        return bool(_NYSE_CALENDAR.is_session(session) and now >= _NYSE_CALENDAR.session_close(session))
     bar_week=(ny_bar.isocalendar().year,ny_bar.isocalendar().week)
     now_week=(ny_now.isocalendar().year,ny_now.isocalendar().week)
     if bar_week < now_week:
         return True
-    # The current US trading week is complete after Friday's extended session,
-    # including Saturday and Sunday before the ISO week number changes.
-    return bar_week == now_week and (
-        ny_now.weekday() >= 5 or (ny_now.weekday() == 4 and ny_now.hour >= 20)
-    )
+    if bar_week != now_week:return False
+    week_start=pd.Timestamp(ny_now.date())-pd.Timedelta(days=ny_now.weekday())
+    week_sessions=_NYSE_CALENDAR.sessions_in_range(week_start,week_start+pd.Timedelta(days=6))
+    return bool(len(week_sessions) and now >= _NYSE_CALENDAR.session_close(week_sessions[-1]))
 
 
 def cache_needs_sync(bars: pd.DataFrame, timeframe: str, now: pd.Timestamp | None = None) -> bool:
     """Return whether a cache can contain a newly completed bar.
 
-    Daily/weekly decisions use the US extended-session close (20:00 New York).
-    Four-hour data uses a three-hour refresh TTL because all-session bars can
-    update across extended trading hours.
+    Daily/weekly decisions use the official NYSE regular-session close.
+    Four-hour data uses a three-hour refresh TTL because it includes all sessions.
     """
     now = now if now is not None else pd.Timestamp.now(tz="UTC")
     if now.tzinfo is None:
@@ -167,8 +171,7 @@ def cache_needs_sync(bars: pd.DataFrame, timeframe: str, now: pd.Timestamp | Non
     ny_now = now.tz_convert("America/New_York")
 
     # Never contact LongPort on a US weekend or a full-session NYSE holiday.
-    # Early-close days are still trading days; the all-session bar is considered
-    # complete at the existing conservative 20:00 New York cut-off.
+    # Early-close days use the close supplied by the NYSE calendar.
     today = pd.Timestamp(ny_now.date())
     if not _NYSE_CALENDAR.is_session(today):
         return False
@@ -180,7 +183,7 @@ def cache_needs_sync(bars: pd.DataFrame, timeframe: str, now: pd.Timestamp | Non
 
     latest_ny = latest.tz_convert("America/New_York")
     sessions = _NYSE_CALENDAR.sessions_in_range(today - pd.Timedelta(days=14), today)
-    if ny_now.hour < 20:
+    if now < _NYSE_CALENDAR.session_close(today):
         sessions = sessions[sessions < today]
     if sessions.empty:
         return False
