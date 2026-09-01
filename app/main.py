@@ -392,3 +392,15 @@ def get_symbol_cache(symbol: str):
     with database.connect(read_only=True) as c:
         rows=c.execute("SELECT timeframe,row_count,earliest_timestamp,latest_timestamp,adjustment_type,trade_session,sync_status,updated_at,last_error FROM market_cache_manifest WHERE symbol=? ORDER BY CASE timeframe WHEN 'weekly' THEN 1 WHEN 'daily' THEN 2 ELSE 3 END",[normalized]).fetchall()
     return {"symbol":normalized,"items":[{"timeframe":r[0],"row_count":r[1],"earliest_timestamp":r[2],"latest_timestamp":r[3],"adjustment_type":r[4],"trade_session":r[5],"sync_status":r[6],"updated_at":r[7],"last_error":r[8]} for r in rows]}
+
+
+@app.post("/api/v1/symbols/{symbol}/sync")
+def sync_symbol_bars(symbol: str):
+    normalized = normalize_symbol(symbol)
+    try:
+        updated = scan_service.sync_symbol(normalized)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"同步失败：{exc}") from exc
+    return {"symbol": normalized, "updated": updated}

@@ -26,6 +26,25 @@ class ScanService:
             rows = c.execute("SELECT symbol,total_score,triggered_factors_json FROM scan_results WHERE run_id=?",[run_id]).fetchall()
         return {row[0]: {"total_score": row[1], "triggered_factors": json.loads(row[2])} for row in rows}
 
+    def sync_symbol(self, symbol: str) -> dict[str, int]:
+        """Force an immediate LongPort refresh of one symbol's cached bars, all timeframes."""
+        if self.active:
+            raise RuntimeError("已有扫描任务正在运行，请稍后重试")
+        if not self.provider.configured:
+            raise RuntimeError("LongPort 凭据尚未配置")
+        if self.settings.longport_auth_mode.lower() == "oauth":
+            self.provider.ensure_authenticated()
+        updated: dict[str, int] = {}
+        for tf in TIMEFRAMES:
+            cached = self.repository.read(symbol, tf)
+            desired_session = "all" if tf == "4hour" else "intraday"
+            session_mismatch = not cached.empty and str(cached.iloc[-1].get("trade_session", "all")) != desired_session
+            request_count = self.settings.bars_per_timeframe if cached.empty or session_mismatch else self.settings.tail_refresh_bars
+            merged = self.repository.merge(symbol, tf, self.provider.fetch_bars(symbol, tf, request_count))
+            self._save_manifest(symbol, tf, merged)
+            updated[tf] = len(merged)
+        return updated
+
     def create_run(self,run_type:str,sync_timeframes:tuple[str,...]=TIMEFRAMES)->tuple[UUID,str,str]:
         with self._lock:
             if self._active_run_id:return self._active_run_id,"running","已有扫描任务正在运行"

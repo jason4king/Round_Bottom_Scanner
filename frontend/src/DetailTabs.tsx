@@ -35,7 +35,19 @@ export function HistoryTab({symbol}:{symbol:string}){
 export function DataTab({symbol}:{symbol:string}){
   const {t}=useTranslation();
   const [data,setData]=useState<CacheResponse|null>(null);const [error,setError]=useState<string|null>(null);
-  useEffect(()=>{setData(null);setError(null);api.cache(symbol).then(setData).catch((e:Error)=>setError(e.message))},[symbol]);
+  const [syncing,setSyncing]=useState(false);const [syncMessage,setSyncMessage]=useState<string|null>(null);const [syncError,setSyncError]=useState<string|null>(null);
+  const load=()=>{setError(null);return api.cache(symbol).then(setData).catch((e:Error)=>setError(e.message))};
+  useEffect(()=>{setData(null);setSyncMessage(null);setSyncError(null);void load()},[symbol]);
+  const sync=async()=>{
+    setSyncing(true);setSyncMessage(null);setSyncError(null);
+    try{
+      await api.syncSymbol(symbol);
+      await load();
+      setSyncMessage(t("syncSuccess"));
+    }catch(e){
+      setSyncError(e instanceof Error?e.message:t("syncFailed"));
+    }finally{setSyncing(false)}
+  };
   if(!data)return <Loading error={error}/>;
-  return <div className="data-view"><div className="data-contract"><span>{t("authoritative")}</span><span>{t("forward")}</span><span>{t("allSessions")}</span><span>Parquet {t("localCache")}</span></div>{data.items.length?<div className="cache-table"><header><span>{t("periodSummary")}</span><span>{t("barCount")}</span><span>{t("earliest")}</span><span>{t("latest")}</span><span>{t("lastSync")}</span><span>{t("status")}</span></header>{data.items.map(x=><div key={x.timeframe}><b>{t(x.timeframe==="4hour"?"fourHour":x.timeframe)}</b><span>{x.row_count}</span><span>{formatDate(x.earliest_timestamp)}</span><span>{formatDate(x.latest_timestamp)}</span><span>{formatDate(x.updated_at)}</span><em>{x.sync_status}</em></div>)}</div>:<Loading error={t("noCache")}/>}</div>
+  return <div className="data-view"><div className="data-contract"><span>{t("authoritative")}</span><span>{t("forward")}</span><span>{t("allSessions")}</span><span>Parquet {t("localCache")}</span></div>{data.items.length?<div className="cache-table"><header><span>{t("periodSummary")}</span><span>{t("barCount")}</span><span>{t("earliest")}</span><span>{t("latest")}</span><span>{t("lastSync")}</span><span>{t("status")}</span></header>{data.items.map(x=><div key={x.timeframe}><b>{t(x.timeframe==="4hour"?"fourHour":x.timeframe)}</b><span>{x.row_count}</span><span>{formatDate(x.earliest_timestamp)}</span><span>{formatDate(x.latest_timestamp)}</span><span>{formatDate(x.updated_at)}</span><em>{x.sync_status}</em></div>)}</div>:<Loading error={t("noCache")}/>}<div className="data-actions">{syncError?<span className="settings-error">{syncError}</span>:syncMessage?<span className="settings-success">{syncMessage}</span>:null}<button className="primary-action" disabled={syncing} onClick={()=>void sync()}>{syncing?t("syncing"):t("syncNow")}</button></div></div>
 }

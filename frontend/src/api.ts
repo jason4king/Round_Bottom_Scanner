@@ -101,6 +101,7 @@ export const api = {
   diagnostics: (symbol:string) => request<Diagnostics>(`/api/v1/symbols/${encodeURIComponent(symbol)}/diagnostics`),
   history: (symbol:string) => request<HistoryResponse>(`/api/v1/symbols/${encodeURIComponent(symbol)}/history`),
   cache: (symbol:string) => request<CacheResponse>(`/api/v1/symbols/${encodeURIComponent(symbol)}/cache`),
+  syncSymbol: (symbol:string) => request<{symbol:string;updated:Record<string,number>}>(`/api/v1/symbols/${encodeURIComponent(symbol)}/sync`, { method: "POST" }),
   authSettings:()=>request<AuthSettings>("/api/v1/settings/auth"),
   saveAuthSettings:(auth_mode:"oauth"|"apikey",oauth_client_id:string)=>request<AuthSettings>("/api/v1/settings/auth",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({auth_mode,oauth_client_id})}),
   authorizeOAuth:()=>request<{status:string;auth_mode:string}>("/api/v1/settings/auth/oauth/authorize",{method:"POST"}),
