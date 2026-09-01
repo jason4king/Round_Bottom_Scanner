@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
+from app.chart_cache import ChartCache
 from app.database import Database
 from app.market_data import LongPortProvider, ParquetBarRepository, _is_closed
 from app.scan_service import ScanService
@@ -32,12 +33,18 @@ from app.scanner_engine import add_indicators, detect_f3, detect_f9
 from app.market_structure import calculate_market_structure
 from trendline_indicator import add_trendline_channels
 
+# Buffer of extra history (beyond the displayed window) fed into indicator
+# computation for long-EMA warm-up and MACD divergence lookback; the minimum
+# matches the app's own default initial backfill size (bars_per_timeframe).
+CHART_COMPUTE_BUFFER = 500
+CHART_MIN_COMPUTE_WINDOW = 1000
 
 settings = get_settings()
 database = Database(settings.database_path)
 provider = LongPortProvider(settings.longport_configured, settings.longport_app_key, settings.longport_app_secret, settings.longport_access_token, settings.longport_auth_mode, settings.longport_oauth_client_id, settings.longport_region, settings.network_proxy_enabled, settings.network_proxy_host, settings.network_proxy_port)
 repository = ParquetBarRepository(settings.parquet_root, settings.cache_retention_bars)
 scan_service = ScanService(settings, database, provider, repository)
+chart_cache = ChartCache()
 daily_push_scheduler = DailyPushScheduler(settings, scan_service, repository)
 four_hour_push_scheduler = FourHourPushScheduler(settings, scan_service, repository)
 
@@ -275,25 +282,45 @@ def get_symbol_bars(
         bars = bars[bars["is_closed"]]
     if bars.empty:
         raise HTTPException(status_code=404, detail="本地缓存中没有可用的已收盘 K 线")
-    # Compute long EMAs over the full cached history, then trim the response.
-    chart = bars.set_index("timestamp_utc")
-    chart = add_indicators(chart.rename(columns={"close": "Close"}))
-    detection_chart = chart.rename(columns={"open":"Open","high":"High","low":"Low","volume":"Volume"})
-    arc = detect_f3(detection_chart)
-    base = detect_f9(detection_chart)
-    base_breakout = None
-    if arc.triggered and base.triggered:
-        base_breakout = {
-            **base.details,
-            "timestamp": chart.index[-1].isoformat(),
-            "arc_source": arc.details.get("source"),
-            "arc_stage": arc.details.get("stage"),
-        }
-    chart = add_trendline_channels(chart, lookback=240, peak_distance=5)
-    structure_radius = {"weekly": 15, "daily": 20, "4hour": 12}[timeframe]
-    market_structure = calculate_market_structure(chart, pivot_radius=structure_radius)
-    full_chart = chart
-    chart = chart.tail(limit)
+
+    # Only compute indicators over what the chart can actually show: the
+    # displayed window plus a warm-up buffer for long EMAs and MACD
+    # divergence lookback, not the entire (unbounded) cached history.
+    compute_window = max(limit + CHART_COMPUTE_BUFFER, CHART_MIN_COMPUTE_WINDOW)
+    compute_bars = bars.tail(compute_window)
+
+    cache_key = (
+        normalized_symbol, timeframe, len(compute_bars),
+        compute_bars["timestamp_utc"].iloc[0], compute_bars["timestamp_utc"].iloc[-1],
+        pd.Timestamp(compute_bars["updated_at"].max()),
+    )
+    cached = chart_cache.get(cache_key)
+    if cached is not None:
+        full_chart, base_breakout, market_structure = cached
+    else:
+        chart = compute_bars.set_index("timestamp_utc")
+        chart = add_indicators(chart.rename(columns={"close": "Close"}))
+        detection_chart = chart.rename(columns={"open":"Open","high":"High","low":"Low","volume":"Volume"})
+        arc = detect_f3(detection_chart)
+        base = detect_f9(detection_chart)
+        base_breakout = None
+        if arc.triggered and base.triggered:
+            base_breakout = {
+                **base.details,
+                "timestamp": chart.index[-1].isoformat(),
+                "arc_source": arc.details.get("source"),
+                "arc_stage": arc.details.get("stage"),
+            }
+        chart = add_trendline_channels(chart, lookback=240, peak_distance=5)
+        structure_radius = {"weekly": 15, "daily": 20, "4hour": 12}[timeframe]
+        market_structure = calculate_market_structure(chart, pivot_radius=structure_radius)
+        full_chart = chart
+        chart_cache.set(cache_key, (full_chart, base_breakout, market_structure))
+    # is_closed depends on wall-clock time, not just the cached bar content,
+    # so it's always recomputed fresh regardless of a cache hit.
+    full_chart = full_chart.copy()
+    full_chart["is_closed"] = full_chart.index.to_series().map(lambda ts: _is_closed(ts, timeframe, now))
+    chart = full_chart.tail(limit)
     payload = []
     for timestamp, row in chart.iterrows():
         from_index=int(row["MACD_XD_DIVERGENCE_FROM_INDEX"]);to_index=int(row["MACD_XD_DIVERGENCE_TO_INDEX"])
