@@ -1,0 +1,133 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Follow_market
+//@version=5
+indicator(title="MACD XD", shorttitle="MACD XD", max_lines_count=500, max_labels_count=500, max_bars_back=3000)
+
+/// Plot colors ///
+col_macd1 = input.color(color.blue, "MACD 线（本级别）", group="颜色设置", inline="MACD")
+col_signal1 = input.color(color.red, "   信号线（本级别）", group="颜色设置", inline="MACD")
+col_macd2 = input.color(color.new(color.green, 40), "MACD 线（高级别）", group="颜色设置", inline="MACD2")
+col_signal2 = input.color(color.new(color.orange, 40), "   信号线（高级别）", group="颜色设置", inline="MACD2")
+col_cross = input.color(color.black, "MACD 零轴上方金叉或零轴下方死叉", group="颜色设置")
+show_cross = input.bool(true, "本级别 MACD 金叉死叉   ", group="颜色设置", inline="Cross")
+show_cross2 = input.bool(true, "高级别 MACD 金叉死叉", group="颜色设置", inline="Cross")
+show_slow_macd = input.bool(true, "显示慢速趋势 MACD", group="慢速趋势 MACD", tooltip="关闭后隐藏 66/143/50 慢速 MACD、背景填充、交叉标签和相关警报")
+col_grow_above = input.color(#26A69A, "零轴上方      上升", group="直方图", inline="Above")
+col_fall_above = input.color(#B2DFDB, "   下降", group="直方图", inline="Above")
+col_grow_below = input.color(#FFCDD2, "零轴下方      上升", group="直方图", inline="Below")
+col_fall_below = input.color(#FF5252, "   下降", group="直方图", inline="Below")
+hollow_hist = input.bool(true, "显示空心直方图", group="直方图")
+show_area = input.bool(true, "显示直方图面积（红绿柱面积）", group="直方图")
+col_sum_above = input.color(#26A69A, "零轴上方面积之和", group="直方图", inline="Sum")
+col_sum_below = input.color(#FF5252, "   零轴下方面积之和", group="直方图", inline="Sum")
+fontSize = input.string(title="直方图面积字体大小", group="直方图", defval=size.normal, options=[size.small, size.normal, size.large])
+manual_ratio = input.bool(false, "手动调整面积倍数 >>", group="直方图", inline="Ratio")
+ratio0 = input.float(title="   倍数", group="直方图", defval=100.0, minval=1.0, maxval=1000000.0, inline="Ratio")
+show_decimal = input.bool(true, "显示面积小数位", group="直方图")
+pos_up = input.float(title="显示位置   零轴上", group="直方图", defval=1.2, minval=1.0, maxval=10.0, inline="Position")
+pos_down = input.float(title="   零轴下", group="直方图", defval=1.75, minval=1.0, maxval=10.0, inline="Position")
+show_line = input.bool(true, "显示背离指示线", group="背离指示线")
+col_div_top = input.color(color.purple, "顶背离", group="背离指示线", inline="Div")
+col_div_bottom = input.color(color.purple, "      底背离", group="背离指示线", inline="Div")
+line_style = input.string(title="指示线类型", group="背离指示线", defval=line.style_dotted, options=[line.style_solid, line.style_dashed, line.style_dotted])
+line_width = input.int(title="指示线宽", group="背离指示线", defval=1, minval=1, maxval=3)
+show_DD = input.bool(true, "显示多空提示标签", group="多空提示")
+col_bottom = input.color(color.new(color.green, 80), "标签颜色      多", group="多空提示", inline="DD")
+col_top = input.color(color.new(color.orange, 80), "   空", group="多空提示", inline="DD")
+col_DD = input.color(color.new(color.black, 10), "标签文字      颜色", group="多空提示", inline="DD2")
+fontSize2 = input.string(title="   大小", group="多空提示", defval=size.small, options=[size.tiny, size.small, size.normal], inline="DD2")
+/// Getting inputs ///
+macd_ratio = input.float(title="MACD 和信号线", group="调整显示比例", minval = 0.2, maxval = 3.0, defval = 1.0, tooltip="将此数值设为1可恢复原始 MACD 设置")
+hist_ratio = input.float(title="直方图", group="调整显示比例", minval = 0.5, maxval = 3.0, defval = 2.0, tooltip="将此数值设为1可恢复原始 MACD 设置")
+src = input.source(title="来源", group="输入设置", defval=close)
+sma_source = input.string(title="震荡 MA 类型", group="输入设置", defval="EMA", options=["SMA", "EMA"])
+sma_signal = input.string(title="信号线 MA 类型", group="输入设置", defval="EMA", options=["SMA", "EMA"])
+fast_length1 = input.int(title="快线长度", group="本级别直方图、MACD 线和信号线", defval=12)
+slow_length1 = input.int(title="慢线长度", group="本级别直方图、MACD 线和信号线", defval=26)
+signal_length1 = input.int(title="信号平滑", group="本级别直方图、MACD 线和信号线", minval = 1, maxval = 50, defval = 9)
+fast_length2 = input.int(title="快线长度", group="高级别直方图、MACD 线和信号线", defval=66)
+slow_length2 = input.int(title="慢线长度", group="高级别直方图、MACD 线和信号线", defval=143)
+signal_length2 = input.int(title="信号平滑", group="高级别直方图、MACD 线和信号线", minval = 1, maxval = 100, defval = 50)
+/// Calculations ///
+fast_ma = sma_source == "SMA" ? ta.sma(src, fast_length1) : ta.ema(src, fast_length1)
+slow_ma = sma_source == "SMA" ? ta.sma(src, slow_length1) : ta.ema(src, slow_length1)
+macd1 = fast_ma - slow_ma
+signal1 = sma_signal == "SMA" ? ta.sma(macd1, signal_length1) : ta.ema(macd1, signal_length1)
+hist1 = macd1 - signal1
+macd2 = ta.ema(src, fast_length2) - ta.ema(src, slow_length2)
+signal2 = ta.ema(macd2, signal_length2)
+hist2 = macd2 - signal2
+var ratio = close<10.0 ? 1000.0/close : 1.0
+if manual_ratio
+    ratio := ratio0
+//plot(hist1*hist_ratio, title="直方图（本级别）", style=plot.style_columns, color=(hist1 >= 0 ? (hist1[1] < hist1 ? col_grow_above : col_fall_above) : (hist1[1] < hist1 ? col_grow_below : col_fall_below)))
+//plotcandle(hist1*hist_ratio, hist1*hist_ratio, 0, 0, title="直方图（本级别）", color=(hist1 >= 0 ? (hist1[1] < hist1 ? na : col_grow_above) : (hist1[1] < hist1 ? na : col_fall_below)), bordercolor=(hist1 >= 0 ? (hist1[1] < hist1 ? col_grow_above : col_grow_above) : (hist1[1] < hist1 ? col_fall_below : col_fall_below)), wickcolor=na)
+col1 = hist1 >= 0 ? (hist1[1] < hist1 ? na : col_grow_above) : (hist1[1] < hist1 ? na : col_fall_below)
+col2 = hist1 >= 0 ? (hist1[1] < hist1 ? col_grow_above : col_fall_above) : (hist1[1] < hist1 ? col_grow_below : col_fall_below)
+plotcandle(hist1*hist_ratio, hist1*hist_ratio, 0, 0, title="直方图（本级别）", color=hollow_hist?col1:col2, bordercolor=hollow_hist?(hist1 >= 0 ? (hist1[1] < hist1 ? col_grow_above : col_grow_above) : (hist1[1] < hist1 ? col_fall_below : col_fall_below)):col2, wickcolor=na)
+plot(0, title="零轴", color=color.new(color.gray, 30))
+m1 = plot(macd1*macd_ratio, title="MACD 线（本级别）", color=col_macd1, linewidth=1)
+s1 = plot(signal1*macd_ratio, title="信号线（本级别）", color=col_signal1, linewidth=1)
+m2 = plot(show_slow_macd ? macd2*macd_ratio : na, title="MACD 线（慢速趋势）", color=col_macd2, linewidth=1)
+s2 = plot(show_slow_macd ? signal2*macd_ratio : na, title="信号线（慢速趋势）", color=col_signal2, linewidth=1)
+fill(m1, s1, title="MACD 背景色 (本级别)", color=hist1>0?(hist1>hist1[1]?color.new(color.blue, 80):color.new(color.blue, 90)):(hist1<hist1[1]?color.new(color.red, 75):color.new(color.red, 85)))
+fill(m2, s2, title="MACD 背景色（慢速趋势）", color=show_slow_macd ? (hist2>0?(hist2>hist2[1]?color.new(color.green, 80):color.new(color.green, 90)):(hist2<hist2[1]?color.new(color.orange, 75):color.new(color.orange, 85))) : na)
+if show_cross and hist1[1] * hist1 < 0
+    label.new(bar_index, macd1/macd_ratio, (macd1[1]<signal1[1] and macd1>signal1)?'▲':(macd1[1]>signal1[1] and macd1<signal1)?'▼':na, style=label.style_none, textcolor=(macd1[1]<signal1[1] and macd1>signal1)?(macd1>0?col_cross:col_macd1):(macd1[1]>signal1[1] and macd1<signal1)?(macd1<0?col_cross:col_signal1):na)
+if show_slow_macd and show_cross2 and hist2[1] * hist2 < 0
+    label.new(bar_index, macd2/macd_ratio, (macd2[1]<signal2[1] and macd2>signal2)?'▲':(macd2[1]>signal2[1] and macd2<signal2)?'▼':na, style=label.style_none, textcolor=(macd2[1]<signal2[1] and macd2>signal2)?col_macd2:(macd2[1]>signal2[1] and macd2<signal2)?col_signal2:na)
+/// Histogram sums ///
+var histM = float(na), var lastHistM = float(na), var llastHistM = float(na), var sum = float(na), var lastSum = float(na), var llastSum = float(na), var barM = int(na), var lastBarM = int(na), var llastBarM = int(na), var line lDiv = na, var label lSum = na, var label lDD = na
+var peak = float(na), var lastPeak = float(na), var llastPeak = float(na), var bar0 = int(na)
+if hist1[1] * hist1 < 0
+    if show_area
+        if show_decimal
+            label.new(barM, sum>0?(histM*hist_ratio*pos_up):(histM*hist_ratio*pos_down), sum>0?str.format("{0,number,#.#}",sum*macd_ratio):str.format("{0,number,#.#}",sum*(-macd_ratio)), style=label.style_none, textcolor=sum>0?col_sum_above:col_sum_below, yloc=yloc.price, size=fontSize)
+        else
+            label.new(barM, sum>0?(histM*hist_ratio*pos_up):(histM*hist_ratio*pos_down), sum>0?str.format("{0,number,integer}",sum*macd_ratio):str.format("{0,number,integer}",sum*(-macd_ratio)), style=label.style_none, textcolor=sum>0?col_sum_above:col_sum_below, yloc=yloc.price, size=fontSize)
+    llastSum := lastSum, lastSum := sum, llastBarM := lastBarM, lastBarM := barM
+    llastPeak := lastPeak, lastPeak := peak, llastHistM := lastHistM, lastHistM := histM
+    sum := hist1 * ratio, histM := hist1, barM := bar_index, bar0 := bar_index, peak := hist1 > 0 ? high : low
+else
+    if hist1 > 0 and hist1 >= histM or hist1 < 0 and hist1 <= histM
+        histM := hist1, barM := bar_index
+    if hist1 > 0 and high >= peak or hist1 < 0 and low <= peak
+        peak := hist1 > 0 ? high : low, bar0 := bar_index
+    sum := sum + hist1 * ratio
+    if show_area
+        label.delete(lSum)
+        if show_decimal
+            lSum := label.new(barM, sum>0?(histM*hist_ratio*pos_up):(histM*hist_ratio*pos_down), sum>0?str.format("{0,number,#.#}",sum*macd_ratio):str.format("{0,number,#.#}",sum*(-macd_ratio)), style=label.style_none, textcolor=sum>0?col_sum_above:col_sum_below, yloc=yloc.price, size=fontSize)
+        else
+            lSum := label.new(barM, sum>0?(histM*hist_ratio*pos_up):(histM*hist_ratio*pos_down), sum>0?str.format("{0,number,integer}",sum*macd_ratio):str.format("{0,number,integer}",sum*(-macd_ratio)), style=label.style_none, textcolor=sum>0?col_sum_above:col_sum_below, yloc=yloc.price, size=fontSize)
+    if llastHistM > 0 and histM > 0 and macd1 > 0
+        if show_line and line.get_y2(lDiv) > 0 and line.get_x2(lDiv) == barM[1]
+            line.delete(lDiv)
+        if label.get_x(lDD) == bar0[1]
+            label.delete(lDD)
+        if peak > llastPeak and sum < llastSum and histM < llastHistM
+            if show_line
+                lDiv := line.new(llastBarM, llastHistM*hist_ratio, barM, histM*hist_ratio, color=col_div_top, style=line_style, width=line_width)
+            if show_DD
+                lDD := label.new(bar0, histM*hist_ratio, "空", style=label.style_label_down, color=col_top, textcolor=col_DD, yloc=yloc.price, size=fontSize2)
+    if llastHistM < 0 and histM < 0 and macd1 < 0
+        if show_line and line.get_y2(lDiv) < 0 and line.get_x2(lDiv) == barM[1]
+            line.delete(lDiv)
+        if label.get_x(lDD) == bar0[1]
+            label.delete(lDD)
+        if peak < llastPeak and sum > llastSum and histM > llastHistM
+            if show_line
+                lDiv := line.new(llastBarM, llastHistM*hist_ratio, barM, histM*hist_ratio, color=col_div_bottom, style=line_style, width=line_width)
+            if show_DD
+                lDD := label.new(bar0, histM*hist_ratio, "多", style=label.style_label_up, color=col_bottom, textcolor=col_DD, yloc=yloc.price, size=fontSize2)
+/// Alert conditions ///
+alertcondition(label.get_x(lDD[1])<label.get_x(lDD), "多空信号", "出现多空信号")
+alertcondition(macd1[1]<signal1[1] and macd1>signal1, "本级别 MACD 金叉", "出现本级别 MACD 金叉")
+alertcondition(macd1[1]>signal1[1] and macd1<signal1, "本级别 MACD 死叉", "出现本级别 MACD 死叉")
+alertcondition(show_slow_macd and macd2[1]<signal2[1] and macd2>signal2, "慢速趋势 MACD 金叉", "出现慢速趋势 MACD 金叉")
+alertcondition(show_slow_macd and macd2[1]>signal2[1] and macd2<signal2, "慢速趋势 MACD 死叉", "出现慢速趋势 MACD 死叉")
+alertcondition(math.min(hist1,hist1[1],hist1[2])>0 and hist1[2]<hist1[3] and hist1[1]<hist1[2] and hist1>hist1[1], "绿柱力度由弱变强", "绿柱力度由弱变强")
+alertcondition(math.min(hist1,hist1[1],hist1[2])>0 and hist1[2]>hist1[3] and hist1[1]>hist1[2] and hist1<hist1[1], "绿柱力度由强变弱", "绿柱力度由强变弱")
+alertcondition(math.max(hist1,hist1[1],hist1[2])<0 and hist1[2]<hist1[3] and hist1[1]<hist1[2] and hist1>hist1[1], "红柱力度由强变弱", "红柱力度由强变弱")
+alertcondition(math.max(hist1,hist1[1],hist1[2])<0 and hist1[2]>hist1[3] and hist1[1]>hist1[2] and hist1<hist1[1], "红柱力度由弱变强", "红柱力度由弱变强")
+/// END ///

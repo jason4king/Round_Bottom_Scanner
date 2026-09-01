@@ -120,6 +120,20 @@ class LongPortProvider:
             rows.append({"symbol":symbol,"timeframe":timeframe,"timestamp_utc":timestamp,"open":float(candle.open),"high":float(candle.high),"low":float(candle.low),"close":float(candle.close),"volume":float(candle.volume),"is_closed":is_closed,"adjustment_type":"forward","trade_session":"all","data_source":"LongPort","updated_at":now})
         return pd.DataFrame(rows,columns=BAR_COLUMNS)
 
+    def fetch_security_names(self, symbols: list[str]) -> dict[str, dict[str, str | None]]:
+        """Return localized security names from LongPort static information."""
+        if not symbols:
+            return {}
+        self.ensure_authenticated()
+        return {
+            item.symbol: {
+                "name_cn": item.name_cn or None,
+                "name_hk": item.name_hk or None,
+                "name_en": item.name_en or None,
+            }
+            for item in self._context.static_info(symbols)
+        }
+
 
 def _is_closed(timestamp: pd.Timestamp, timeframe: str, now: pd.Timestamp) -> bool:
     if timeframe == "4hour": return timestamp + pd.Timedelta(hours=4) <= now

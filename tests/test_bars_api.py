@@ -17,9 +17,12 @@ def test_bars_endpoint_reads_local_cache(tmp_path: Path):
         assert response.json()["source"]=="local_parquet"
         assert response.json()["count"]==20
         assert "market_structure" in response.json()
+        assert "base_breakout" in response.json()
         assert "levels" not in response.json()
         last_bar=response.json()["bars"][-1]
         assert {"rsi","rsi_signal","rsi_w_bottom","rsi_bullish_divergence","rsi_order_block_confluence","bullish_order_block_distance_pct","rsi_enhanced_buy","rsi_breakout_buy","rsi_v_bottom_buy","rsi_neckline","rsi_stop_level"} <= set(last_bar)
-        assert "macd_dif" not in last_bar
+        assert {"macd","macd_signal","macd_hist","macd_area","macd_golden_cross","macd_bull_divergence"} <= set(last_bar)
+        assert {"macd_divergence_from_timestamp","macd_divergence_from_value","macd_divergence_to_timestamp","macd_divergence_to_value"} <= set(last_bar)
+        assert "macd_trend" not in last_bar
     finally:
         repository.root=original_root

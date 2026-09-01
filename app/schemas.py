@@ -52,3 +52,4 @@ class ScanResultItem(BaseModel):
     data_status: str
     f7_pattern: dict | None = None
     classic_patterns: list[dict] = Field(default_factory=list)
+    breakout_patterns: list[dict] = Field(default_factory=list)

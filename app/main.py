@@ -26,7 +26,7 @@ from app.schemas import (
 )
 from app.watchlist import load_watchlist, save_watchlist
 from app.watchlist import normalize_symbol
-from app.scanner_engine import add_indicators
+from app.scanner_engine import add_indicators, detect_f3, detect_f9
 from app.market_structure import calculate_market_structure
 from trendline_indicator import add_trendline_channels
 
@@ -146,6 +146,16 @@ def get_watchlist() -> WatchlistResponse:
     )
 
 
+@app.get("/api/v1/security-names")
+def get_security_names() -> dict:
+    """Get watchlist display names without making the main UI depend on this call."""
+    try:
+        symbols = load_watchlist(settings.watchlist_path).symbols
+        return {"names": provider.fetch_security_names(symbols), "error": None}
+    except Exception as exc:
+        return {"names": {}, "error": str(exc)}
+
+
 @app.put("/api/v1/watchlist", response_model=WatchlistResponse)
 def update_watchlist(request: WatchlistUpdateRequest) -> WatchlistResponse:
     try:
@@ -200,12 +210,14 @@ def get_latest_results() -> list[ScanResultItem]:
             ORDER BY r.total_score DESC, r.symbol
             """
         ).fetchall()
-        patterns={};classic_patterns={}
+        patterns={};classic_patterns={};breakout_patterns={}
         for row in rows:
             pattern=connection.execute("SELECT timeframe,details_json FROM factor_results WHERE run_id=? AND symbol=? AND factor_id='F7' AND triggered ORDER BY CAST(json_extract(details_json,'$.confidence') AS DOUBLE) DESC LIMIT 1",[row[4],row[0]]).fetchone()
             if pattern:patterns[row[0]]={**json.loads(pattern[1]),"timeframe":pattern[0]}
             classic=connection.execute("SELECT timeframe,factor_id,signal_name,details_json FROM factor_results WHERE run_id=? AND symbol=? AND factor_id LIKE 'P%' AND triggered ORDER BY timeframe,factor_id",[row[4],row[0]]).fetchall()
             classic_patterns[row[0]]=[{"timeframe":item[0],"pattern_id":item[1],"signal_name":item[2],**json.loads(item[3])} for item in classic]
+            bases=connection.execute("SELECT f.timeframe,f.details_json FROM factor_results f JOIN factor_results arc ON arc.run_id=f.run_id AND arc.symbol=f.symbol AND arc.timeframe=f.timeframe AND arc.factor_id='F3' AND arc.triggered WHERE f.run_id=? AND f.symbol=? AND f.factor_id='F9' AND f.triggered ORDER BY CASE f.timeframe WHEN 'weekly' THEN 1 WHEN 'daily' THEN 2 ELSE 3 END",[row[4],row[0]]).fetchall()
+            breakout_patterns[row[0]]=[{"timeframe":item[0],**json.loads(item[1])} for item in bases]
     return [
         ScanResultItem(
             symbol=row[0],
@@ -214,6 +226,7 @@ def get_latest_results() -> list[ScanResultItem]:
             data_status=row[3],
             f7_pattern=patterns.get(row[0]),
             classic_patterns=classic_patterns.get(row[0],[]),
+            breakout_patterns=breakout_patterns.get(row[0],[]),
         )
         for row in rows
     ]
@@ -249,12 +262,25 @@ def get_symbol_bars(
     # Compute long EMAs over the full cached history, then trim the response.
     chart = bars.set_index("timestamp_utc")
     chart = add_indicators(chart.rename(columns={"close": "Close"}))
+    detection_chart = chart.rename(columns={"open":"Open","high":"High","low":"Low","volume":"Volume"})
+    arc = detect_f3(detection_chart)
+    base = detect_f9(detection_chart)
+    base_breakout = None
+    if arc.triggered and base.triggered:
+        base_breakout = {
+            **base.details,
+            "timestamp": chart.index[-1].isoformat(),
+            "arc_source": arc.details.get("source"),
+            "arc_stage": arc.details.get("stage"),
+        }
     chart = add_trendline_channels(chart, lookback=240, peak_distance=5)
     structure_radius = {"weekly": 15, "daily": 20, "4hour": 12}[timeframe]
     market_structure = calculate_market_structure(chart, pivot_radius=structure_radius)
+    full_chart = chart
     chart = chart.tail(limit)
     payload = []
     for timestamp, row in chart.iterrows():
+        from_index=int(row["MACD_XD_DIVERGENCE_FROM_INDEX"]);to_index=int(row["MACD_XD_DIVERGENCE_TO_INDEX"])
         payload.append({
             "timestamp": timestamp.isoformat(),
             "open": float(row["open"]), "high": float(row["high"]),
@@ -275,6 +301,15 @@ def get_symbol_bars(
             "rsi_neckline": float(row["RSI_NECKLINE"]) if pd.notna(row["RSI_NECKLINE"]) else None,
             "rsi_stop_level": float(row["RSI_STOP_LEVEL"]) if pd.notna(row["RSI_STOP_LEVEL"]) else None,
             "rsi_breakout_volume_ratio": float(row["RSI_BREAKOUT_VOLUME_RATIO"]) if pd.notna(row["RSI_BREAKOUT_VOLUME_RATIO"]) else None,
+            "macd": float(row["MACD_XD"]), "macd_signal": float(row["MACD_XD_SIGNAL"]),
+            "macd_hist": float(row["MACD_XD_HIST"]), "macd_area": float(row["MACD_XD_AREA"]),
+            "macd_hist_growing": bool(row["MACD_XD_HIST_GROWING"]),
+            "macd_golden_cross": bool(row["MACD_XD_GOLDEN_CROSS"]), "macd_dead_cross": bool(row["MACD_XD_DEAD_CROSS"]),
+            "macd_bull_divergence": bool(row["MACD_XD_BULL_DIVERGENCE"]), "macd_bear_divergence": bool(row["MACD_XD_BEAR_DIVERGENCE"]),
+            "macd_divergence_from_timestamp": full_chart.index[from_index].isoformat() if from_index>=0 else None,
+            "macd_divergence_from_value": float(full_chart.iloc[from_index]["MACD_XD_HIST"]) if from_index>=0 else None,
+            "macd_divergence_to_timestamp": full_chart.index[to_index].isoformat() if to_index>=0 else None,
+            "macd_divergence_to_value": float(full_chart.iloc[to_index]["MACD_XD_HIST"]) if to_index>=0 else None,
             "trend_support": float(row["trend_support"]) if math.isfinite(float(row["trend_support"])) else None,
             "trend_resistance": float(row["trend_resistance"]) if math.isfinite(float(row["trend_resistance"])) else None,
             "is_closed": bool(row["is_closed"]),
@@ -287,6 +322,7 @@ def get_symbol_bars(
         "trade_session": "all",
         "count": len(payload),
         "market_structure": market_structure,
+        "base_breakout": base_breakout,
         "bars": payload,
     }
 

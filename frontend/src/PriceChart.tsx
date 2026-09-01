@@ -8,6 +8,7 @@ import {
   createSeriesMarkers,
   createTextWatermark,
   type IChartApi,
+  type SeriesMarker,
   type UTCTimestamp,
 } from "lightweight-charts";
 import { api, type BarsResponse } from "./api";
@@ -15,15 +16,19 @@ import { displaySymbol } from "./display";
 import { useTranslation } from "react-i18next";
 
 type Timeframe = "weekly" | "daily" | "4hour";
+type IndicatorPane = "rsi" | "macd";
 const periods: Timeframe[] = ["weekly","daily","4hour"];
 
 export default function PriceChart({ symbol }: { symbol: string }) {
   const {t}=useTranslation();
   const host = useRef<HTMLDivElement>(null);
   const rsiHost = useRef<HTMLDivElement>(null);
+  const macdHost = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
   const rsiChart = useRef<IChartApi | null>(null);
+  const macdChart = useRef<IChartApi | null>(null);
   const [timeframe, setTimeframe] = useState<Timeframe>("daily");
+  const [indicatorPane,setIndicatorPane]=useState<IndicatorPane>(()=>localStorage.getItem("chart-indicator-pane")==="macd"?"macd":"rsi");
   const [payload, setPayload] = useState<BarsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -42,9 +47,10 @@ export default function PriceChart({ symbol }: { symbol: string }) {
   }, [symbol, timeframe]);
 
   useEffect(() => {
-    if (!host.current || !rsiHost.current || !payload?.bars.length) return;
+    if (!host.current || !rsiHost.current || !macdHost.current || !payload?.bars.length) return;
     chart.current?.remove();
     rsiChart.current?.remove();
+    macdChart.current?.remove();
     const instance = createChart(host.current, {
       autoSize: true,
       layout: { background: { type: ColorType.Solid, color: "#091522" }, textColor: "#8298ad", fontSize: 11 },
@@ -73,7 +79,12 @@ export default function PriceChart({ symbol }: { symbol: string }) {
       timeScale: { borderColor: "#263b4e", timeVisible: timeframe === "4hour" },
     });
     rsiChart.current = rsiInstance;
-    const candles = instance.addSeries(CandlestickSeries, { upColor: "#4fd0ad", downColor: "#ef6b73", borderVisible: false, wickUpColor: "#4fd0ad", wickDownColor: "#ef6b73", priceLineColor: "#f0a23a" });
+    const macdInstance=createChart(macdHost.current,{
+      autoSize:true,layout:{background:{type:ColorType.Solid,color:"#091522"},textColor:"#8298ad",fontSize:10},
+      grid:{vertLines:{color:"#132638"},horzLines:{color:"#132638"}},rightPriceScale:{borderColor:"#263b4e",scaleMargins:{top:.08,bottom:.08},minimumWidth:42},timeScale:{borderColor:"#263b4e",timeVisible:timeframe==="4hour"},
+    });
+    macdChart.current=macdInstance;
+    const candles = instance.addSeries(CandlestickSeries, { upColor: "#4fd0ad", downColor: "#ef6b73", borderVisible: false, wickUpColor: "#4fd0ad", wickDownColor: "#ef6b73", priceLineVisible: false });
     const volume = instance.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "volume", lastValueVisible: false, priceLineVisible: false });
     instance.priceScale("volume").applyOptions({ scaleMargins: { top: .82, bottom: 0 } });
     const ema12 = instance.addSeries(LineSeries, { color: "#f5f0df", lineWidth: 2, priceLineVisible: false, lastValueVisible: false, visible:showVegas });
@@ -97,6 +108,9 @@ export default function PriceChart({ symbol }: { symbol: string }) {
     trendResistance.setData(points.filter((p)=>p.trend_resistance!==null).map((p)=>({time:p.time,value:p.trend_resistance!})));
     rsiNeckline.setData(points.filter((p)=>p.rsi_neckline!==null).map((p)=>({time:p.time,value:p.rsi_neckline!})));
     rsiStop.setData(points.filter((p)=>p.rsi_stop_level!==null).map((p)=>({time:p.time,value:p.rsi_stop_level!})));
+    if(payload.base_breakout){
+      candles.createPriceLine({price:payload.base_breakout.pivot_price,color:payload.base_breakout.buy_candidate?"#62e0c1":"#f2b94b",lineWidth:2,lineStyle:2,axisLabelVisible:true,title:t("basePivot")});
+    }
     const buyLookback:Record<Timeframe,number>={weekly:52,daily:100,"4hour":120};
     const buyStart=Math.max(0,points.length-buyLookback[timeframe]);
     const nearDisplayedBullishBlock=(low:number,time:UTCTimestamp,maxDistance=.02)=>payload.market_structure.order_blocks.some((block)=>{
@@ -171,22 +185,58 @@ export default function PriceChart({ symbol }: { symbol: string }) {
       return mainBuyCandidates.includes(p)||trendPullbackTimes.has(Number(p.time));
     });
     const mainBuyPoints=combinedBuyPoints.slice(-1);
-    createSeriesMarkers(candles, mainBuyPoints.map((p)=>({
+    const priceMarkers:SeriesMarker<UTCTimestamp>[]=mainBuyPoints.map((p)=>({
       time:p.time, position:"belowBar" as const,
       color:p.rsi_v_bottom_buy?"#f5c542":"#f0a23a",
       shape:"arrowUp" as const,
       text:t(trendStartTimes.has(Number(p.time))?"trendStartBuy":trendPullbackTimes.has(Number(p.time))?"trendPullbackBuy":p.rsi_v_bottom_buy?"rsiVBottomBuy":"rsiBreakoutBuy"),
-    })));
+    }));
+    if(payload.base_breakout){
+      const signal=payload.base_breakout;
+      priceMarkers.push({
+        time:Math.floor(new Date(signal.timestamp).getTime()/1000) as UTCTimestamp,
+        position:"belowBar",color:signal.buy_candidate?"#ff5b61":"#f2b94b",shape:signal.buy_candidate?"arrowUp":"circle",
+        text:`${t(`baseType.${signal.base_type}`)} · ${t(signal.buy_candidate?"baseBuy":"baseWatch")}`,
+      });
+    }
+    createSeriesMarkers(candles,priceMarkers);
     const rsi = rsiInstance.addSeries(LineSeries, { color:"#9b7de3", lineWidth:2, priceLineVisible:false, lastValueVisible:true });
     const rsiSignal = rsiInstance.addSeries(LineSeries, { color:"#d6ad42", lineWidth:1, priceLineVisible:false, lastValueVisible:true });
     rsi.setData(points.filter((p)=>p.rsi!==null).map((p)=>({time:p.time,value:p.rsi!})));
     rsiSignal.setData(points.filter((p)=>p.rsi_signal!==null).map((p)=>({time:p.time,value:p.rsi_signal!})));
-    [30, 50, 70].forEach((level) => rsi.createPriceLine({ price:level, color:level===50?"rgba(130,152,173,.45)":"rgba(130,152,173,.28)", lineWidth:1, lineStyle:2, axisLabelVisible:true, title:"" }));
+    [30, 50, 70].forEach((level) => rsi.createPriceLine({
+      price:level,
+      color:level===70?"rgba(255,145,152,.72)":level===30?"rgba(116,224,174,.72)":"rgba(130,152,173,.45)",
+      lineWidth:1,lineStyle:2,axisLabelVisible:true,title:"",
+    }));
     createSeriesMarkers(rsi, points.filter((p)=>(p.rsi_w_bottom || p.rsi_enhanced_buy) && p.rsi!==null).map((p)=>({
       time:p.time, position:"belowBar" as const,
       color:p.rsi_enhanced_buy?"#4fd0ad":"#73a7d8",
       shape:p.rsi_enhanced_buy?"arrowUp" as const:"circle" as const,
       text:p.rsi_enhanced_buy?(p.rsi_bullish_divergence?t("rsiDivergenceConfirmed"):t("rsiMomentumConfirmed")):t("rsiWSetup"),
+    })));
+    const macdHistogram=macdInstance.addSeries(HistogramSeries,{priceLineVisible:false,lastValueVisible:true,priceFormat:{type:"price",precision:3,minMove:.001}});
+    const macdLine=macdInstance.addSeries(LineSeries,{color:"#4f8ff7",lineWidth:2,priceLineVisible:false,lastValueVisible:true});
+    const macdSignal=macdInstance.addSeries(LineSeries,{color:"#ef6b73",lineWidth:1,priceLineVisible:false,lastValueVisible:true});
+    macdHistogram.setData(points.map((p,index)=>({time:p.time,value:p.macd_hist*2,color:p.macd_hist>=0?(p.macd_hist_growing?"#26a69a":"#b2dfdb"):(p.macd_hist_growing?"#ffcdd2":"#ff5252")})));
+    macdLine.setData(points.map(p=>({time:p.time,value:p.macd})));
+    macdSignal.setData(points.map(p=>({time:p.time,value:p.macd_signal})));
+    macdHistogram.createPriceLine({price:0,color:"rgba(130,152,173,.35)",lineWidth:1,lineStyle:0,axisLabelVisible:false,title:""});
+    points.filter(p=>p.macd_divergence_from_timestamp&&p.macd_divergence_to_timestamp&&p.macd_divergence_from_value!==null&&p.macd_divergence_to_value!==null).forEach(p=>{
+      const divergenceLine=macdInstance.addSeries(LineSeries,{color:"rgba(255,255,255,.9)",lineWidth:1,lineStyle:2,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
+      divergenceLine.setData([
+        {time:Math.floor(new Date(p.macd_divergence_from_timestamp!).getTime()/1000) as UTCTimestamp,value:p.macd_divergence_from_value!*2},
+        {time:Math.floor(new Date(p.macd_divergence_to_timestamp!).getTime()/1000) as UTCTimestamp,value:p.macd_divergence_to_value!*2},
+      ]);
+    });
+    createSeriesMarkers(macdLine,points.filter(p=>p.macd_golden_cross||p.macd_dead_cross).map(p=>({
+      time:p.time,position:p.macd_dead_cross?"aboveBar" as const:"belowBar" as const,
+      color:p.macd_golden_cross?"#4f8ff7":"#ef6b73",shape:p.macd_dead_cross?"arrowDown" as const:"arrowUp" as const,
+    })));
+    createSeriesMarkers(macdHistogram,points.filter(p=>(p.macd_bull_divergence||p.macd_bear_divergence)&&p.macd_divergence_to_value!==null).map(p=>({
+      time:p.time,position:p.macd_bear_divergence?"atPriceTop" as const:"atPriceBottom" as const,price:p.macd_divergence_to_value!*2,
+      color:"#f0a23a",shape:p.macd_bear_divergence?"arrowDown" as const:"arrowUp" as const,
+      text:t(p.macd_bear_divergence?"macdBearDivergence":"macdBullDivergence"),
     })));
     const pointsByTime=new Map(points.map((point)=>[Number(point.time),point]));
     let crosshairSyncing=false;
@@ -196,6 +246,14 @@ export default function PriceChart({ symbol }: { symbol: string }) {
       const point=param.time===undefined?undefined:pointsByTime.get(Number(param.time));
       if(point?.rsi!==null&&point?.rsi!==undefined)rsiInstance.setCrosshairPosition(point.rsi,point.time,rsi);
       else rsiInstance.clearCrosshairPosition();
+      if(point)macdInstance.setCrosshairPosition(point.macd,point.time,macdLine);else macdInstance.clearCrosshairPosition();
+      crosshairSyncing=false;
+    };
+    const syncMacdCrosshair=(param:{time?:unknown})=>{
+      if(crosshairSyncing)return;crosshairSyncing=true;
+      const point=param.time===undefined?undefined:pointsByTime.get(Number(param.time));
+      if(point){instance.setCrosshairPosition(point.close,point.time,candles);if(point.rsi!==null)rsiInstance.setCrosshairPosition(point.rsi,point.time,rsi)}
+      else{instance.clearCrosshairPosition();rsiInstance.clearCrosshairPosition()}
       crosshairSyncing=false;
     };
     const syncRsiCrosshair=(param:{time?:unknown})=>{
@@ -208,11 +266,13 @@ export default function PriceChart({ symbol }: { symbol: string }) {
     };
     instance.subscribeCrosshairMove(syncMainCrosshair);
     rsiInstance.subscribeCrosshairMove(syncRsiCrosshair);
+    macdInstance.subscribeCrosshairMove(syncMacdCrosshair);
     const initialBars: Record<Timeframe, number> = { weekly: 120, daily: 100, "4hour": 140 };
     const visibleCount = Math.min(initialBars[timeframe], points.length);
     const initialRange = { from: points.length - visibleCount, to: points.length + 4 };
     instance.timeScale().setVisibleLogicalRange(initialRange);
     rsiInstance.timeScale().setVisibleLogicalRange(initialRange);
+    macdInstance.timeScale().setVisibleLogicalRange(initialRange);
     const overlay=document.createElement("canvas");
     Object.assign(overlay.style,{position:"absolute",inset:"0",pointerEvents:"none",zIndex:"4"});
     host.current.appendChild(overlay);
@@ -236,19 +296,20 @@ export default function PriceChart({ symbol }: { symbol: string }) {
     };
     const resizeObserver=new ResizeObserver(drawStructure); resizeObserver.observe(host.current); requestAnimationFrame(drawStructure);
     let syncing=false;
-    instance.timeScale().subscribeVisibleLogicalRangeChange((range)=>{drawStructure();if(!range||syncing)return;syncing=true;rsiInstance.timeScale().setVisibleLogicalRange(range);syncing=false});
-    rsiInstance.timeScale().subscribeVisibleLogicalRangeChange((range)=>{if(!range||syncing)return;syncing=true;instance.timeScale().setVisibleLogicalRange(range);syncing=false});
-    return () => { instance.unsubscribeCrosshairMove(syncMainCrosshair); rsiInstance.unsubscribeCrosshairMove(syncRsiCrosshair); resizeObserver.disconnect(); overlay.remove(); instance.remove(); rsiInstance.remove(); if (chart.current === instance) chart.current = null; if(rsiChart.current===rsiInstance)rsiChart.current=null; };
+    instance.timeScale().subscribeVisibleLogicalRangeChange((range)=>{drawStructure();if(!range||syncing)return;syncing=true;rsiInstance.timeScale().setVisibleLogicalRange(range);macdInstance.timeScale().setVisibleLogicalRange(range);syncing=false});
+    rsiInstance.timeScale().subscribeVisibleLogicalRangeChange((range)=>{if(!range||syncing)return;syncing=true;instance.timeScale().setVisibleLogicalRange(range);macdInstance.timeScale().setVisibleLogicalRange(range);syncing=false});
+    macdInstance.timeScale().subscribeVisibleLogicalRangeChange((range)=>{if(!range||syncing)return;syncing=true;instance.timeScale().setVisibleLogicalRange(range);rsiInstance.timeScale().setVisibleLogicalRange(range);syncing=false});
+    return () => { instance.unsubscribeCrosshairMove(syncMainCrosshair); rsiInstance.unsubscribeCrosshairMove(syncRsiCrosshair); macdInstance.unsubscribeCrosshairMove(syncMacdCrosshair); resizeObserver.disconnect(); overlay.remove(); instance.remove(); rsiInstance.remove(); macdInstance.remove(); if (chart.current === instance) chart.current = null; if(rsiChart.current===rsiInstance)rsiChart.current=null;if(macdChart.current===macdInstance)macdChart.current=null; };
   }, [payload, timeframe, t, showTradeLevels, showVegas, showTrendlines]);
 
   return <div className="chart-view">
     <div className="chart-toolbar">
-      <div className="period-switch">{periods.map((period) => <button key={period} className={timeframe===period ? "active" : ""} onClick={() => setTimeframe(period)}>{t(period==="4hour"?"fourHour":period)}</button>)}</div>
+      <div className="chart-switches"><div className="period-switch">{periods.map((period) => <button key={period} className={timeframe===period ? "active" : ""} onClick={() => setTimeframe(period)}>{t(period==="4hour"?"fourHour":period)}</button>)}</div><div className="indicator-switch"><button className={indicatorPane==="rsi"?"active":""} onClick={()=>{setIndicatorPane("rsi");localStorage.setItem("chart-indicator-pane","rsi")}}>RSI</button><button className={indicatorPane==="macd"?"active":""} onClick={()=>{setIndicatorPane("macd");localStorage.setItem("chart-indicator-pane","macd")}}>MACD</button></div></div>
       <div className="chart-contract"><button className={showVegas?"active":""} onClick={()=>setShowVegas((visible)=>{localStorage.setItem("chart-vegas",String(!visible));return !visible})}>{t("vegasChannel")}</button><button className={showTrendlines?"active":""} onClick={()=>setShowTrendlines((visible)=>{localStorage.setItem("chart-trendlines",String(!visible));return !visible})}>{t("trendlines")}</button><button className={showTradeLevels?"active":""} onClick={()=>setShowTradeLevels((visible)=>{localStorage.setItem("chart-trade-levels",String(!visible));return !visible})}>{t("tradeLevels")}</button><span>{t("forward")}</span><span>{t("allSessions")}</span><span>{t("localCache")}</span>{payload && <span>{payload.count} {t("bars")}</span>}</div>
     </div>
     <div className="chart-legend"><span className="ema12">EMA12</span><span className="yellow">EMA144 / 169</span><span className="green">EMA576 / 676</span><span className="support">{t("trendSupport")}</span><span className="resistance">{t("trendResistance")}</span><span className="structure">{t("marketStructure")}</span><span className="rsi">{t("rsiNote")}</span></div>
     {loading && <div className="chart-message">{t("chartLoading")}</div>}
     {error && <div className="chart-message error"><strong>{t("chartError")}</strong><span>{error}</span><small>{t("syncFirst")}</small></div>}
-    <div className={`chart-stack ${loading || error ? "hidden" : ""}`}><div ref={host} className="chart-host"/><div className="rsi-label">RSI 10 <span>SMA 10</span><i>{t("rsiEnhancedSignal")}</i></div><div ref={rsiHost} className="rsi-host"/></div>
+    <div className={`chart-stack ${loading || error ? "hidden" : ""}`}><div ref={host} className="chart-host"/>{indicatorPane==="rsi"?<div className="rsi-label">RSI 10 <span>SMA 10</span><i>{t("rsiEnhancedSignal")}</i></div>:<div className="macd-label">MACD XD <span>12/26/9</span><i>{t("macdArea")}: {payload?.bars.at(-1)?.macd_area.toFixed(1)}</i></div>}<div className="indicator-host-stack"><div ref={rsiHost} className={`rsi-host ${indicatorPane!=="rsi"?"indicator-hidden":""}`}/><div ref={macdHost} className={`macd-host ${indicatorPane!=="macd"?"indicator-hidden":""}`}/></div></div>
   </div>;
 }

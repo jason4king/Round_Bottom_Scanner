@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from app.scanner_engine import _rsi_bottom_structure, add_indicators, detect_f3, detect_f7, scan_symbol
+from app.scanner_engine import _rsi_bottom_structure, add_indicators, detect_f3, detect_f7, detect_f9, scan_symbol
 
 def bars(count: int = 700) -> pd.DataFrame:
     x=np.arange(count,dtype=float); close=100+0.0005*(x-count/2)**2
@@ -16,6 +16,24 @@ def test_rsi_indicator_is_bounded_and_uses_a_ten_bar_signal_line():
     assert enriched["RSI10"].first_valid_index()==frame.index[10]
     assert enriched["RSI_SIGNAL10"].first_valid_index()==frame.index[19]
     assert enriched["RSI_ENHANCED_BUY"].dtype==bool
+
+def test_macd_xd_matches_ema_formulas_and_exposes_crosses():
+    frame=bars(220);enriched=add_indicators(frame);close=frame.Close
+    expected=close.ewm(span=12,adjust=False).mean()-close.ewm(span=26,adjust=False).mean()
+    expected_signal=expected.ewm(span=9,adjust=False).mean()
+    assert np.allclose(enriched.MACD_XD,expected)
+    assert np.allclose(enriched.MACD_XD_SIGNAL,expected_signal)
+    assert np.allclose(enriched.MACD_XD_HIST,expected-expected_signal)
+    assert {"MACD_XD_AREA","MACD_XD_BULL_DIVERGENCE","MACD_XD_BEAR_DIVERGENCE"} <= set(enriched.columns)
+    assert "MACD_XD_TREND" not in enriched.columns
+
+def test_macd_xd_does_not_keep_a_provisional_divergence_in_a_growing_segment():
+    first=np.r_[np.linspace(100,110,20),np.linspace(110,105,8)]
+    stronger=np.linspace(105,125,24)
+    close=np.r_[first,stronger]
+    frame=pd.DataFrame({"Open":close-.2,"High":close+.5,"Low":close-.5,"Close":close,"Volume":1000.},index=pd.date_range("2026-01-01",periods=len(close),freq="4h",tz="UTC"))
+    enriched=add_indicators(frame)
+    assert not enriched.iloc[-10:].MACD_XD_BEAR_DIVERGENCE.any()
 
 
 def test_rsi_bottom_structure_confirms_w_and_divergence_at_confirmation_bar():
@@ -74,7 +92,7 @@ def test_rsi_bottom_structure_confirms_extreme_oversold_v_reversal_without_order
 def test_scan_returns_all_timeframes_and_factors():
     frame=bars(); result=scan_symbol("TEST.US",{"weekly":frame,"daily":frame,"4hour":frame})
     assert set(result["timeframes"])=={"weekly","daily","4hour"}
-    assert set(result["timeframes"]["daily"]["factors"])=={f"F{i}" for i in range(1,9)}|{f"P{i}" for i in range(1,7)}
+    assert set(result["timeframes"]["daily"]["factors"])=={f"F{i}" for i in range(1,10)}|{f"P{i}" for i in range(1,7)}
     assert not (set(result["triggered_factors"])&{f"P{i}" for i in range(1,7)})
     assert result["scoring"]["total_score"]>=0
 
@@ -86,6 +104,18 @@ def test_f3_finds_a_large_round_bottom_outside_the_short_window():
     assert result.details["window"]==180
     assert result.details["r_squared"]>.99
     assert 64 <= result.details["vertex_x"] <= 66
+
+def test_f3_detects_smooth_ema12_arc_despite_noisy_closes():
+    count=120; x=np.arange(count,dtype=float)
+    ema12=80*np.exp(.00008*(x-58)**2)
+    close=100+8*np.sin(x*1.7)+5*np.sin(x*.43)
+    frame=pd.DataFrame({"Close":close,"EMA12":ema12},index=pd.date_range("2026-01-01",periods=count,freq="4h",tz="UTC"))
+    result=detect_f3(frame)
+    assert result.triggered is True
+    assert result.details["source"]=="ema12"
+    assert result.details["ema12_arc"] is True
+    assert result.details["close_arc"] is False
+    assert result.details["stage"] in {"confirmed","breakout","extended"}
 
 def test_f7_detects_cup_handle_without_entering_scoring_factors():
     cup_x=np.linspace(-1,1,90);cup=80+20*cup_x**2;handle=np.linspace(99,96,8).tolist()+[97,99,102]
@@ -104,3 +134,13 @@ def test_f7_rejects_a_sharp_v_bottom():
     close=np.r_[np.full(20,100.),cup,handle];volume=np.full(len(close),700.);volume[:-len(handle)]=1000.;volume[-1]=2200.
     frame=pd.DataFrame({"Open":close-.2,"High":close+.5,"Low":close-.5,"Close":close,"Volume":volume},index=pd.date_range("2026-01-01",periods=len(close),freq="4h",tz="UTC"))
     assert detect_f7(frame).triggered is False
+
+def test_f9_marks_a_flat_base_breakout_with_volume_as_buy_candidate():
+    close=np.r_[np.linspace(80,100,20),100+np.sin(np.arange(20))*.8,103.]
+    volume=np.r_[np.full(40,1000.),2000.]
+    frame=pd.DataFrame({"Open":close-.3,"High":close+.4,"Low":close-.5,"Close":close,"Volume":volume},index=pd.date_range("2026-01-01",periods=len(close),freq="D",tz="UTC"))
+    result=detect_f9(frame)
+    assert result.triggered is True
+    assert result.details["base_type"]=="flat_base"
+    assert result.details["stage"]=="breakout_confirmed"
+    assert result.details["buy_candidate"] is True

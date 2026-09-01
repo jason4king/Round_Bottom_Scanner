@@ -42,11 +42,60 @@ def add_indicators(frame: pd.DataFrame) -> pd.DataFrame:
     bars["RSI_SIGNAL10"] = bars["RSI10"].rolling(10).mean()
     bull_cross = (bars["RSI10"] > bars["RSI_SIGNAL10"]) & (bars["RSI10"].shift(1) <= bars["RSI_SIGNAL10"].shift(1))
     bars["RSI_BULL_CROSS"] = bull_cross
+    for column, values in _macd_xd(bars).items():
+        bars[column] = values
     bars["BULLISH_OB_DISTANCE_PCT"] = bullish_order_block_distance(bars)
     structure = _rsi_bottom_structure(bars)
     for column in structure:
         bars[column] = structure[column]
     return bars
+
+
+def _macd_xd(bars: pd.DataFrame) -> pd.DataFrame:
+    """MACD XD: current-timeframe 12/26/9 MACD and histogram-area divergence."""
+    close=bars["Close"].astype(float)
+    fast=close.ewm(span=12,adjust=False).mean();slow=close.ewm(span=26,adjust=False).mean()
+    macd=fast-slow;signal=macd.ewm(span=9,adjust=False).mean();hist=macd-signal
+    result=pd.DataFrame(index=bars.index)
+    result["MACD_XD"]=macd;result["MACD_XD_SIGNAL"]=signal;result["MACD_XD_HIST"]=hist
+    previous_hist=hist.shift(1)
+    result["MACD_XD_GOLDEN_CROSS"]=(previous_hist<=0)&(hist>0)
+    result["MACD_XD_DEAD_CROSS"]=(previous_hist>=0)&(hist<0)
+    result["MACD_XD_HIST_GROWING"]=hist>previous_hist
+    result["MACD_XD_AREA"]=0.0;result["MACD_XD_BULL_DIVERGENCE"]=False;result["MACD_XD_BEAR_DIVERGENCE"]=False
+    result["MACD_XD_DIVERGENCE_FROM_INDEX"]=-1;result["MACD_XD_DIVERGENCE_TO_INDEX"]=-1
+    high_column="High" if "High" in bars else "high" if "high" in bars else None
+    low_column="Low" if "Low" in bars else "low" if "low" in bars else None
+    highs=bars[high_column].to_numpy(float) if high_column else close.to_numpy(float)
+    lows=bars[low_column].to_numpy(float) if low_column else close.to_numpy(float)
+    values=hist.to_numpy(float);macd_values=macd.to_numpy(float)
+    ratio=1000/float(close.iloc[0]) if len(close) and float(close.iloc[0])<10 else 1.0
+    prior_by_sign:dict[int,dict[str,float]]={};start=0
+    while start<len(values):
+        sign=1 if values[start]>=0 else -1;end=start
+        while end+1<len(values) and (1 if values[end+1]>=0 else -1)==sign:end+=1
+        running=0.0;hist_extreme=-np.inf if sign>0 else np.inf;price_extreme=-np.inf if sign>0 else np.inf;hist_extreme_index=start;price_extreme_index=start
+        for index in range(start,end+1):
+            running+=values[index]*ratio;result.iat[index,result.columns.get_loc("MACD_XD_AREA")]=running
+            if (sign>0 and values[index]>=hist_extreme) or (sign<0 and values[index]<=hist_extreme):
+                hist_extreme=values[index];hist_extreme_index=index
+            candidate_price=highs[index] if sign>0 else lows[index]
+            if (sign>0 and candidate_price>=price_extreme) or (sign<0 and candidate_price<=price_extreme):
+                price_extreme=candidate_price;price_extreme_index=index
+        prior=prior_by_sign.get(sign)
+        # Match the Pine indicator's live behavior: evaluate the current (even
+        # unfinished) segment on every refresh. If it later strengthens, a full
+        # recalculation removes this provisional label and line.
+        if prior:
+            if sign>0 and macd_values[end]>0 and price_extreme>prior["price"] and running<prior["area"] and hist_extreme<prior["hist"]:
+                result.iat[price_extreme_index,result.columns.get_loc("MACD_XD_BEAR_DIVERGENCE")]=True
+                result.iat[price_extreme_index,result.columns.get_loc("MACD_XD_DIVERGENCE_FROM_INDEX")]=int(prior["index"]);result.iat[price_extreme_index,result.columns.get_loc("MACD_XD_DIVERGENCE_TO_INDEX")]=hist_extreme_index
+            elif sign<0 and macd_values[end]<0 and price_extreme<prior["price"] and running>prior["area"] and hist_extreme>prior["hist"]:
+                result.iat[price_extreme_index,result.columns.get_loc("MACD_XD_BULL_DIVERGENCE")]=True
+                result.iat[price_extreme_index,result.columns.get_loc("MACD_XD_DIVERGENCE_FROM_INDEX")]=int(prior["index"]);result.iat[price_extreme_index,result.columns.get_loc("MACD_XD_DIVERGENCE_TO_INDEX")]=hist_extreme_index
+        prior_by_sign[sign]={"area":running,"hist":hist_extreme,"price":price_extreme,"index":hist_extreme_index}
+        start=end+1
+    return result
 
 
 def _wilder_rsi(close: pd.Series, period: int) -> pd.Series:
@@ -276,17 +325,57 @@ def detect_f3(b: pd.DataFrame) -> FactorResult:
         valid=bool(a>0 and r2>=.7 and .2*window<=vertex<=.8*window)
         vertex_position=int(np.clip(round(vertex),0,window-1)) if np.isfinite(vertex) else None
         candidates.append({
-            "window":window,"curvature":float(a),"r_squared":r2,"vertex_x":vertex,
+            "source":"close","window":window,"curvature":float(a),"r_squared":r2,"vertex_x":vertex,
             "vertex_price":vertex_price,"current_price":current_price,
             "rise_from_vertex_pct":rise*100,"bars_since_vertex":bars_since_vertex,
             "vertex_timestamp":sample.index[vertex_position].isoformat() if vertex_position is not None else None,
             "window_start_timestamp":sample.index[0].isoformat(),"valid":valid,
         })
+    if "EMA12" in b:
+        for window in (60, 90, 120, 180):
+            if len(b) < window: continue
+            sample=b.iloc[-window:]; raw=sample.EMA12.to_numpy(float)
+            if not np.isfinite(raw).all() or (raw <= 0).any(): continue
+            # Log-normalization makes curvature comparable across low- and high-priced stocks.
+            y=np.log(raw/raw[0]); x=np.arange(window,dtype=float)
+            a,slope,intercept=np.polyfit(x,y,2); fitted=np.polyval((a,slope,intercept),x)
+            total=float(((y-y.mean())**2).sum()); r2=1-float(((y-fitted)**2).sum())/total if total else 0.0
+            vertex=float(-slope/(2*a)) if a else float("inf")
+            vertex_position=int(np.clip(round(vertex),0,window-1)) if np.isfinite(vertex) else None
+            vertex_price=float(raw[0]*np.exp(np.polyval((a,slope,intercept),vertex))) if np.isfinite(vertex) else float("nan")
+            current_price=float(raw[-1]); rise=(current_price/vertex_price-1.0) if np.isfinite(vertex_price) and vertex_price>0 else float("nan")
+            bars_since_vertex=float(window-1-vertex) if np.isfinite(vertex) else float("nan")
+            left_slope=float(slope); current_slope=float(2*a*(window-1)+slope)
+            recent_count=max(5,min(12,window//10)); recent_diffs=np.diff(raw[-(recent_count+1):])
+            rising_ratio=float((recent_diffs>0).mean()) if len(recent_diffs) else 0.0
+            fitted_vertex=float(np.polyval((a,slope,intercept),vertex)) if np.isfinite(vertex) else float("nan")
+            endpoint_depth=min(float(fitted[0]),float(fitted[-1]))-fitted_vertex if np.isfinite(fitted_vertex) else float("nan")
+            valid=bool(
+                a>0 and r2>=.75 and .25*window<=vertex<=.75*window
+                and left_slope<0 and current_slope>0 and rising_ratio>=.7
+                and endpoint_depth>=.015
+            )
+            if rise>=.35: stage="extended"
+            elif rise>=.15 or bars_since_vertex>=.35*window: stage="breakout"
+            elif current_slope>abs(left_slope)*.25: stage="confirmed"
+            else: stage="forming"
+            candidates.append({
+                "source":"ema12","stage":stage,"window":window,"curvature":float(a),
+                "r_squared":r2,"vertex_x":vertex,"vertex_price":vertex_price,
+                "current_price":current_price,"rise_from_vertex_pct":rise*100,
+                "bars_since_vertex":bars_since_vertex,"left_slope":left_slope,
+                "current_slope":current_slope,"recent_rising_ratio":rising_ratio,
+                "endpoint_depth_pct":endpoint_depth*100,
+                "vertex_timestamp":sample.index[vertex_position].isoformat() if vertex_position is not None else None,
+                "window_start_timestamp":sample.index[0].isoformat(),"valid":valid,
+            })
     valid_candidates=[candidate for candidate in candidates if candidate["valid"]]
     selected=max(valid_candidates or candidates,key=lambda candidate:candidate["r_squared"])
     return _result("F3", "Round Bottom", b, bool(valid_candidates), {
         **{key:value for key,value in selected.items() if key!="valid"},
         "candidate_windows":candidates,
+        "close_arc":any(candidate["valid"] and candidate["source"]=="close" for candidate in candidates),
+        "ema12_arc":any(candidate["valid"] and candidate["source"]=="ema12" for candidate in candidates),
         "reason":None if valid_candidates else "fit_requirements_not_met",
     })
 
@@ -407,7 +496,40 @@ def detect_f8(b: pd.DataFrame) -> FactorResult:
     return _result("F8", "RSI W-Bottom", b, True, details)
 
 
-DETECTORS=(detect_f1,detect_f2,detect_f3,detect_f4,detect_f5,detect_f6,detect_f7,detect_f8)
+def detect_f9(b: pd.DataFrame) -> FactorResult:
+    """Observe CAN SLIM-style cup/handle, double-bottom and flat-base pivots."""
+    if len(b)<35:return _result("F9","Base Breakout",b,False,{"reason":"insufficient_history","required":35,"actual":len(b),"scored":False})
+    candidates=[]; current=float(b.Close.iloc[-1]); prior_volume=float(b.Volume.iloc[-21:-1].mean()); volume_ratio=float(b.Volume.iloc[-1])/prior_volume if prior_volume else 0.0
+    cup=detect_f7(b)
+    if cup.triggered:
+        candidates.append({"base_type":"cup_handle","stage":cup.details["stage"],"pivot_price":float(cup.details["breakout_level"]),"confidence":float(cup.details["confidence"]),"source_factor":"F7"})
+    w=b.iloc[-min(120,len(b)):]; lows=w.Low.to_numpy(float); highs=w.High.to_numpy(float); low_pivots=_pivots(lows,3,False)
+    for right in reversed(low_pivots):
+        for left in reversed([p for p in low_pivots if 10<=right-p<=60]):
+            left_low=float(lows[left]);right_low=float(lows[right]);undercut=(left_low-right_low)/left_low
+            neckline=float(np.max(highs[left:right+1]));depth=neckline/min(left_low,right_low)-1
+            if -.02<=undercut<=.08 and .08<=depth<=.35 and right<=len(w)-3:
+                stage="breakout_confirmed" if current>=neckline*1.005 and volume_ratio>=1.5 else "breakout_ready" if current>=neckline*.97 else "base_forming"
+                confidence=min(100,55+min(depth/.20,1)*20+min(max(undercut,0)/.05,1)*10+min(volume_ratio/1.5,1)*15)
+                candidates.append({"base_type":"double_bottom","stage":stage,"pivot_price":neckline,"confidence":confidence,"left_low_price":left_low,"right_low_price":right_low,"undercut_pct":undercut*100,"depth_pct":depth*100})
+                break
+        if any(c["base_type"]=="double_bottom" for c in candidates):break
+    for length in (15,20,25,30,35):
+        if len(b)<length+1:continue
+        base=b.iloc[-length-1:-1];top=float(base.High.max());bottom=float(base.Low.min());range_pct=top/bottom-1 if bottom else np.inf
+        x=np.arange(length,dtype=float);low_slope=float(np.polyfit(x,base.Low.to_numpy(float),1)[0]/bottom) if bottom else -np.inf
+        if range_pct<=.12 and low_slope>=-.0015:
+            stage="breakout_confirmed" if current>=top*1.005 and volume_ratio>=1.5 else "breakout_ready" if current>=top*.97 else "base_forming"
+            confidence=min(100,55+max(0,1-range_pct/.12)*25+min(volume_ratio/1.5,1)*20)
+            candidates.append({"base_type":"flat_base","stage":stage,"pivot_price":top,"confidence":confidence,"base_length":length,"range_pct":range_pct*100,"low_slope_pct_per_bar":low_slope*100})
+    if not candidates:return _result("F9","Base Breakout",b,False,{"reason":"base_requirements_not_met","scored":False})
+    rank={"base_forming":1,"cup_complete":1,"handle_forming":2,"breakout_ready":3,"breakout_confirmed":4}
+    selected=max(candidates,key=lambda c:(rank.get(c["stage"],0),c["confidence"]))
+    selected={**selected,"current_price":current,"distance_to_pivot_pct":(current/selected["pivot_price"]-1)*100,"breakout_volume_ratio":volume_ratio,"buy_candidate":selected["stage"]=="breakout_confirmed","scored":False,"candidate_count":len(candidates)}
+    return _result("F9","Base Breakout",b,True,selected)
+
+
+DETECTORS=(detect_f1,detect_f2,detect_f3,detect_f4,detect_f5,detect_f6,detect_f7,detect_f8,detect_f9)
 
 
 def scan_symbol(symbol: str, timeframe_bars: dict[str,pd.DataFrame]) -> dict[str,Any]:

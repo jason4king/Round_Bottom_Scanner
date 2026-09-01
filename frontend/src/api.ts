@@ -20,6 +20,7 @@ export type ScanResult = {
   data_status: string;
   f7_pattern: {stage:"cup_complete"|"handle_forming"|"breakout_ready"|"breakout_confirmed";confidence:number;timeframe:string} | null;
   classic_patterns: {timeframe:string;pattern_id:string;signal_name:string;pattern_name:string;detected_timestamp:string;bars_ago:number}[];
+  breakout_patterns: {timeframe:string;base_type:"cup_handle"|"double_bottom"|"flat_base";stage:string;pivot_price:number;distance_to_pivot_pct:number;breakout_volume_ratio:number;buy_candidate:boolean;confidence:number}[];
 };
 
 export type ScanStatus = {
@@ -39,6 +40,9 @@ export type ChartBar = {
   rsi_w_bottom: boolean; rsi_bullish_divergence: boolean; rsi_order_block_confluence: boolean; bullish_order_block_distance_pct: number | null; rsi_enhanced_buy: boolean;
   rsi_breakout_buy: boolean; rsi_v_bottom_buy: boolean; rsi_neckline: number | null; rsi_stop_level: number | null;
   rsi_breakout_volume_ratio: number | null;
+  macd:number;macd_signal:number;macd_hist:number;macd_area:number;
+  macd_hist_growing:boolean;macd_golden_cross:boolean;macd_dead_cross:boolean;macd_bull_divergence:boolean;macd_bear_divergence:boolean;
+  macd_divergence_from_timestamp:string|null;macd_divergence_from_value:number|null;macd_divergence_to_timestamp:string|null;macd_divergence_to_value:number|null;
   trend_support: number | null; trend_resistance: number | null;
   is_closed: boolean;
 };
@@ -55,6 +59,7 @@ export type BarsResponse = {
     levels:{kind:"strong_high"|"weak_high"|"strong_low"|"weak_low";price:number;start_timestamp:string}[];
     order_blocks:{bias:"bullish"|"bearish";top:number;bottom:number;start_timestamp:string;confirmed_at_timestamp:string;end_timestamp:string|null;active:boolean}[];
   };
+  base_breakout: null|{timestamp:string;base_type:"cup_handle"|"double_bottom"|"flat_base";stage:string;pivot_price:number;distance_to_pivot_pct:number;breakout_volume_ratio:number;buy_candidate:boolean;confidence:number;arc_source:"close"|"ema12";arc_stage?:string};
   bars: ChartBar[];
 };
 
@@ -64,6 +69,8 @@ export type HistoryResponse = { symbol:string; history:{run_id:string;completed_
 export type CacheResponse = { symbol:string; items:{timeframe:string;row_count:number;earliest_timestamp:string;latest_timestamp:string;adjustment_type:string;trade_session:string;sync_status:string;updated_at:string;last_error:string|null}[] };
 export type AuthSettings={auth_mode:"oauth"|"apikey";oauth_client_id:string|null;configured:boolean;token_managed_by_sdk:boolean};
 export type ProxySettings={enabled:boolean;host:string;port:number};
+export type SecurityName={name_cn:string|null;name_hk:string|null;name_en:string|null};
+export type SecurityNamesResponse={names:Record<string,SecurityName>;error:string|null};
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
@@ -77,6 +84,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   status: () => request<SystemStatus>("/api/v1/status"),
   watchlist: () => request<Watchlist>("/api/v1/watchlist"),
+  securityNames: () => request<SecurityNamesResponse>("/api/v1/security-names"),
   saveWatchlist: (symbols:string[]) => request<Watchlist>("/api/v1/watchlist", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -91,7 +99,7 @@ export const api = {
     }),
   scanStatus: (runId: string) => request<ScanStatus>(`/api/v1/scans/${runId}`),
   bars: (symbol: string, timeframe: string, limit = 500) =>
-    request<BarsResponse>(`/api/v1/symbols/${encodeURIComponent(symbol)}/bars?timeframe=${timeframe}&limit=${limit}`),
+    request<BarsResponse>(`/api/v1/symbols/${encodeURIComponent(symbol)}/bars?timeframe=${timeframe}&limit=${limit}&include_open=true`),
   diagnostics: (symbol:string) => request<Diagnostics>(`/api/v1/symbols/${encodeURIComponent(symbol)}/diagnostics`),
   history: (symbol:string) => request<HistoryResponse>(`/api/v1/symbols/${encodeURIComponent(symbol)}/history`),
   cache: (symbol:string) => request<CacheResponse>(`/api/v1/symbols/${encodeURIComponent(symbol)}/cache`),
