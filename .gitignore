@@ -5,6 +5,7 @@ __pycache__/
 *.py[cod]
 data/*.duckdb
 data/*.duckdb.wal
+data/*.json
 data/market/
 frontend/node_modules/
 frontend/dist/

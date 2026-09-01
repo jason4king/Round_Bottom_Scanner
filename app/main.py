@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from app.json_utils import json_safe
 import pandas as pd
 from contextlib import asynccontextmanager
@@ -14,7 +15,7 @@ from app.config import get_settings
 from app.database import Database
 from app.market_data import LongPortProvider, ParquetBarRepository, _is_closed
 from app.scan_service import ScanService
-from app.scheduler import DailyPushScheduler
+from app.scheduler import DailyPushScheduler, FourHourPushScheduler
 from app.schemas import (
     ScanCreateRequest,
     ScanCreateResponse,
@@ -38,12 +39,17 @@ provider = LongPortProvider(settings.longport_configured, settings.longport_app_
 repository = ParquetBarRepository(settings.parquet_root, settings.cache_retention_bars)
 scan_service = ScanService(settings, database, provider, repository)
 daily_push_scheduler = DailyPushScheduler(settings, scan_service, repository)
+four_hour_push_scheduler = FourHourPushScheduler(settings, scan_service, repository)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     database.initialize()
-    daily_push_scheduler.start()
+    # Skip background schedulers under pytest so tests never fire real LongPort
+    # calls or WeCom pushes (pytest sets this env var for the running process).
+    if "PYTEST_CURRENT_TEST" not in os.environ:
+        daily_push_scheduler.start()
+        four_hour_push_scheduler.start()
     try:
         yield
     finally:

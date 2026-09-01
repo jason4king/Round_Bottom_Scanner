@@ -1,19 +1,23 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
+from app.config import Settings
 from app.market_data import _is_closed
 from app.market_structure import calculate_market_structure
 from app.scanner_engine import add_indicators
 
-# Mirrors PriceChart.tsx's buyLookback.daily / structure_radius.daily so the
-# server-side signal matches exactly what the daily chart marker shows.
-BUY_LOOKBACK = 100
-STRUCTURE_RADIUS = 20
-TAIL_WINDOW = BUY_LOOKBACK + 20
+# Mirrors PriceChart.tsx's buyLookback / structure_radius per timeframe so the
+# server-side signal matches exactly what the chart marker shows.
+BUY_LOOKBACK = {"weekly": 52, "daily": 100, "4hour": 120}
+STRUCTURE_RADIUS = {"weekly": 15, "daily": 20, "4hour": 12}
+
+TIMEFRAME_LABELS = {"weekly": "周线", "daily": "日线", "4hour": "4小时"}
 
 LABELS = {
     "trend_start": "趋势转多",
@@ -24,7 +28,8 @@ LABELS = {
 
 
 @dataclass
-class DailyBuySignal:
+class BuySignal:
+    timeframe: str
     signal_type: str
     label: str
     timestamp: str
@@ -44,8 +49,8 @@ def _near_bullish_block(order_blocks: list[dict], low: float, time: pd.Timestamp
     return False
 
 
-def _build_points(chart: pd.DataFrame) -> list[dict[str, Any]]:
-    window = chart.tail(TAIL_WINDOW)
+def _build_points(chart: pd.DataFrame, tail_window: int) -> list[dict[str, Any]]:
+    window = chart.tail(tail_window)
     points = []
     for timestamp, row in window.iterrows():
         points.append({
@@ -140,27 +145,28 @@ def _trend_pullback_times(points: list[dict], buy_start: int) -> set:
     return times
 
 
-def evaluate_daily_signal(repository, symbol: str) -> DailyBuySignal | None:
+def evaluate_signal(repository, symbol: str, timeframe: str) -> BuySignal | None:
     """Replicates the orange/gold buy-marker logic from PriceChart.tsx for the
-    daily chart, and reports a signal only if it lands on the latest closed bar."""
-    bars = repository.read(symbol, "daily")
+    given timeframe, and reports a signal only if it lands on the latest closed bar."""
+    bars = repository.read(symbol, timeframe)
     if bars.empty:
         return None
     now = pd.Timestamp.now(tz="UTC")
     bars = bars.copy()
-    bars["is_closed"] = bars["timestamp_utc"].map(lambda value: _is_closed(value, "daily", now))
+    bars["is_closed"] = bars["timestamp_utc"].map(lambda value: _is_closed(value, timeframe, now))
     bars = bars[bars.is_closed]
     if bars.empty:
         return None
     chart = bars.set_index("timestamp_utc")
     chart = add_indicators(chart.rename(columns={"close": "Close"}))
-    order_blocks = calculate_market_structure(chart, pivot_radius=STRUCTURE_RADIUS)["order_blocks"]
+    order_blocks = calculate_market_structure(chart, pivot_radius=STRUCTURE_RADIUS[timeframe])["order_blocks"]
 
-    points = _build_points(chart)
+    buy_lookback = BUY_LOOKBACK[timeframe]
+    points = _build_points(chart, buy_lookback + 20)
     n = len(points)
     if n == 0:
         return None
-    buy_start = max(0, n - BUY_LOOKBACK)
+    buy_start = max(0, n - buy_lookback)
     last_index = n - 1
     last = points[last_index]
 
@@ -208,7 +214,8 @@ def evaluate_daily_signal(repository, symbol: str) -> DailyBuySignal | None:
     elif signal_type == "trend_pullback":
         details.update({"ema144": last["ema144"]})
 
-    return DailyBuySignal(
+    return BuySignal(
+        timeframe=timeframe,
         signal_type=signal_type,
         label=LABELS[signal_type],
         timestamp=last["time"].isoformat(),
@@ -217,10 +224,11 @@ def evaluate_daily_signal(repository, symbol: str) -> DailyBuySignal | None:
     )
 
 
-def build_wecom_message(symbol: str, signal: DailyBuySignal, total_score: float, triggered_factors: list[str]) -> str:
+def build_wecom_message(symbol: str, signal: BuySignal, total_score: float, triggered_factors: list[str]) -> str:
+    timeframe_label = TIMEFRAME_LABELS[signal.timeframe]
     lines = [
-        "🟠 圆弧底扫描 · 日线买点提示",
-        f"{symbol}｜日线",
+        f"🟠 圆弧底扫描 · {timeframe_label}买点提示",
+        f"{symbol}｜{timeframe_label}",
         f"{signal.label}",
         "",
         f"现价 {signal.last_price:.2f}　综合评分 {total_score:.1f}",
@@ -246,11 +254,40 @@ def build_wecom_message(symbol: str, signal: DailyBuySignal, total_score: float,
         lines.append("回踩订单块/EMA144 支撑后收盘企稳")
         if d.get("rsi") is not None:
             lines.append(f"RSI 回升至 {d['rsi']:.1f}")
+    bar_time_et = pd.Timestamp(signal.timestamp).tz_convert("America/New_York")
+    bar_time_label = bar_time_et.strftime("%Y-%m-%d") if signal.timeframe == "daily" else bar_time_et.strftime("%Y-%m-%d %H:%M")
     lines += [
         "",
-        f"触发K线：{signal.timestamp[:10]} 收盘",
+        f"触发K线：{bar_time_label} ET 收盘",
         f"推送时间：{pd.Timestamp.now(tz='America/New_York').strftime('%Y-%m-%d %H:%M')} ET",
         "",
         "⚠️ 仅供研究参考，非投资建议，请自行核实并控制仓位",
     ]
     return "\n".join(lines)
+
+
+def _state_path(settings: Settings) -> Path:
+    return settings.database_path.parent / "pushed_signals_state.json"
+
+
+def load_pushed_state(settings: Settings) -> dict[str, str]:
+    path = _state_path(settings)
+    if not path.is_file():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def save_pushed_state(settings: Settings, state: dict[str, str]) -> None:
+    _state_path(settings).write_text(json.dumps(state), encoding="utf-8")
+
+
+def already_pushed(state: dict[str, str], timeframe: str, symbol: str, signal: BuySignal) -> bool:
+    key = f"{timeframe}:{symbol}"
+    return state.get(key) == signal.timestamp
+
+
+def mark_pushed(state: dict[str, str], timeframe: str, symbol: str, signal: BuySignal) -> None:
+    state[f"{timeframe}:{symbol}"] = signal.timestamp
