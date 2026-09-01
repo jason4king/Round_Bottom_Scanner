@@ -19,7 +19,6 @@ export type ScanResult = {
   triggered_factors: string[];
   data_status: string;
   f7_pattern: {stage:"cup_complete"|"handle_forming"|"breakout_ready"|"breakout_confirmed";confidence:number;timeframe:string} | null;
-  classic_patterns: {timeframe:string;pattern_id:string;signal_name:string;pattern_name:string;detected_timestamp:string;bars_ago:number}[];
   breakout_patterns: {timeframe:string;base_type:"cup_handle"|"double_bottom"|"flat_base";stage:string;pivot_price:number;distance_to_pivot_pct:number;breakout_volume_ratio:number;buy_candidate:boolean;confidence:number}[];
 };
 

@@ -92,8 +92,7 @@ def test_rsi_bottom_structure_confirms_extreme_oversold_v_reversal_without_order
 def test_scan_returns_all_timeframes_and_factors():
     frame=bars(); result=scan_symbol("TEST.US",{"weekly":frame,"daily":frame,"4hour":frame})
     assert set(result["timeframes"])=={"weekly","daily","4hour"}
-    assert set(result["timeframes"]["daily"]["factors"])=={f"F{i}" for i in range(1,10)}|{f"P{i}" for i in range(1,7)}
-    assert not (set(result["triggered_factors"])&{f"P{i}" for i in range(1,7)})
+    assert set(result["timeframes"]["daily"]["factors"])=={f"F{i}" for i in range(1,10)}
     assert result["scoring"]["total_score"]>=0
 
 def test_f3_finds_a_large_round_bottom_outside_the_short_window():

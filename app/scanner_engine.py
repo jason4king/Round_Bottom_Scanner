@@ -7,7 +7,6 @@ import numpy as np
 import pandas as pd
 from app.json_utils import json_safe
 from app.market_structure import bullish_order_block_distance
-from app.patternpy_observer import observe_classic_patterns
 
 
 @dataclass
@@ -536,9 +535,6 @@ def scan_symbol(symbol: str, timeframe_bars: dict[str,pd.DataFrame]) -> dict[str
     tf_results={}
     for timeframe,bars in timeframe_bars.items():
         enriched=add_indicators(bars); factors={r.factor_id:r for r in (fn(enriched) for fn in DETECTORS)}
-        for observed in observe_classic_patterns(enriched):
-            result=_result(observed["pattern_id"],observed["signal_name"],enriched,observed["triggered"],observed["details"])
-            factors[result.factor_id]=result
         tf_results[timeframe]={"factors":factors,"triggered":{fid for fid,r in factors.items() if r.triggered},"bar_timestamp":enriched.index[-1].isoformat()}
     periods_by_factor={fid:frozenset(tf for tf,v in tf_results.items() if fid in v["triggered"]) for fid in SCORING_FACTOR_IDS}
     contributions={}; base_total=0.

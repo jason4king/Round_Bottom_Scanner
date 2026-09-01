@@ -240,12 +240,10 @@ def get_latest_results() -> list[ScanResultItem]:
             ORDER BY r.total_score DESC, r.symbol
             """
         ).fetchall()
-        patterns={};classic_patterns={};breakout_patterns={}
+        patterns={};breakout_patterns={}
         for row in rows:
             pattern=connection.execute("SELECT timeframe,details_json FROM factor_results WHERE run_id=? AND symbol=? AND factor_id='F7' AND triggered ORDER BY CAST(json_extract(details_json,'$.confidence') AS DOUBLE) DESC LIMIT 1",[row[4],row[0]]).fetchone()
             if pattern:patterns[row[0]]={**json.loads(pattern[1]),"timeframe":pattern[0]}
-            classic=connection.execute("SELECT timeframe,factor_id,signal_name,details_json FROM factor_results WHERE run_id=? AND symbol=? AND factor_id LIKE 'P%' AND triggered ORDER BY timeframe,factor_id",[row[4],row[0]]).fetchall()
-            classic_patterns[row[0]]=[{"timeframe":item[0],"pattern_id":item[1],"signal_name":item[2],**json.loads(item[3])} for item in classic]
             bases=connection.execute("SELECT f.timeframe,f.details_json FROM factor_results f JOIN factor_results arc ON arc.run_id=f.run_id AND arc.symbol=f.symbol AND arc.timeframe=f.timeframe AND arc.factor_id='F3' AND arc.triggered WHERE f.run_id=? AND f.symbol=? AND f.factor_id='F9' AND f.triggered ORDER BY CASE f.timeframe WHEN 'weekly' THEN 1 WHEN 'daily' THEN 2 ELSE 3 END",[row[4],row[0]]).fetchall()
             breakout_patterns[row[0]]=[{"timeframe":item[0],**json.loads(item[1])} for item in bases]
     return [
@@ -255,7 +253,6 @@ def get_latest_results() -> list[ScanResultItem]:
             triggered_factors=json.loads(row[2]),
             data_status=row[3],
             f7_pattern=patterns.get(row[0]),
-            classic_patterns=classic_patterns.get(row[0],[]),
             breakout_patterns=breakout_patterns.get(row[0],[]),
         )
         for row in rows

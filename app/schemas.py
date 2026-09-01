@@ -51,5 +51,4 @@ class ScanResultItem(BaseModel):
     triggered_factors: list[str]
     data_status: str
     f7_pattern: dict | None = None
-    classic_patterns: list[dict] = Field(default_factory=list)
     breakout_patterns: list[dict] = Field(default_factory=list)
