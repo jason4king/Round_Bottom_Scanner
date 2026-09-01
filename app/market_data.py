@@ -245,9 +245,16 @@ class ParquetBarRepository:
             return pd.DataFrame(columns=BAR_COLUMNS)
         return pd.read_parquet(path)
 
-    def merge(self, symbol: str, timeframe: str, incoming: pd.DataFrame) -> pd.DataFrame:
+    def merge(self, symbol: str, timeframe: str, incoming: pd.DataFrame, *, replace_session: bool = False) -> pd.DataFrame:
         normalized = validate_bars(incoming, symbol, timeframe)
         existing = self.read(symbol, timeframe)
+        if replace_session and not existing.empty and not normalized.empty:
+            # The incoming batch was fetched under a different trade_session
+            # (e.g. daily/weekly switching from "all" to "intraday"). Bars for
+            # the old session use different timestamps for the same calendar
+            # bar, so the timestamp-keyed dedup below can't collapse them —
+            # drop the stale-session rows outright instead of doubling up.
+            existing = existing[existing["trade_session"] == normalized["trade_session"].iloc[0]]
         # Avoid concatenating the schema-only empty frame returned on a cache miss.
         # Besides being unnecessary, pandas is deprecating its dtype inference for
         # empty/all-NA concat operands.

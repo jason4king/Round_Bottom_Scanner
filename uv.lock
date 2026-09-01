@@ -323,15 +323,6 @@ wheels = [
 ]
 
 [[package]]
-name = "patternpy"
-version = "1.0"
-source = { git = "https://github.com/keithorange/PatternPy.git?rev=2b1f29b17986acafffeb32c83e772417d540c100#2b1f29b17986acafffeb32c83e772417d540c100" }
-dependencies = [
-    { name = "numpy" },
-    { name = "pandas" },
-]
-
-[[package]]
 name = "pluggy"
 version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
@@ -593,7 +584,6 @@ dependencies = [
     { name = "fastapi" },
     { name = "numpy" },
     { name = "pandas" },
-    { name = "patternpy" },
     { name = "pyarrow" },
     { name = "pydantic-settings" },
     { name = "uvicorn", extra = ["standard"] },
@@ -617,7 +607,6 @@ requires-dist = [
     { name = "longport", marker = "extra == 'longport'", specifier = ">=4.3.7,<5" },
     { name = "numpy", specifier = ">=1.26,<2.3" },
     { name = "pandas", specifier = ">=2.2,<3" },
-    { name = "patternpy", git = "https://github.com/keithorange/PatternPy.git?rev=2b1f29b17986acafffeb32c83e772417d540c100" },
     { name = "pyarrow", specifier = ">=18,<22" },
     { name = "pydantic-settings", specifier = ">=2.7,<3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3,<9" },

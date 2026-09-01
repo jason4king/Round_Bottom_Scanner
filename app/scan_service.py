@@ -40,7 +40,7 @@ class ScanService:
             desired_session = "all" if tf == "4hour" else "intraday"
             session_mismatch = not cached.empty and str(cached.iloc[-1].get("trade_session", "all")) != desired_session
             request_count = self.settings.bars_per_timeframe if cached.empty or session_mismatch else self.settings.tail_refresh_bars
-            merged = self.repository.merge(symbol, tf, self.provider.fetch_bars(symbol, tf, request_count))
+            merged = self.repository.merge(symbol, tf, self.provider.fetch_bars(symbol, tf, request_count), replace_session=session_mismatch)
             self._save_manifest(symbol, tf, merged)
             updated[tf] = len(merged)
         return updated
@@ -73,7 +73,7 @@ class ScanService:
                             if cached.empty and not self.settings.auto_backfill_new_symbols:
                                 raise ValueError(f"{tf} 没有本地 K 线，且自动补全已关闭")
                             request_count = self.settings.bars_per_timeframe if cached.empty or session_mismatch else self.settings.tail_refresh_bars
-                            merged=self.repository.merge(symbol,tf,self.provider.fetch_bars(symbol,tf,request_count)); self._save_manifest(symbol,tf,merged)
+                            merged=self.repository.merge(symbol,tf,self.provider.fetch_bars(symbol,tf,request_count),replace_session=session_mismatch); self._save_manifest(symbol,tf,merged)
                         else:
                             merged=cached
                         now=pd.Timestamp.now(tz="UTC"); merged=merged.copy()
