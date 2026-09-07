@@ -17,6 +17,8 @@ def test_bars_endpoint_reads_local_cache(tmp_path: Path):
         assert response.json()["source"]=="local_parquet"
         assert response.json()["count"]==20
         assert "market_structure" in response.json()
+        assert "elliott_wave" in response.json()
+        assert {"active", "state", "points", "target_zone", "invalidation_price"} <= set(response.json()["elliott_wave"])
         assert "base_breakout" in response.json()
         assert "levels" not in response.json()
         last_bar=response.json()["bars"][-1]

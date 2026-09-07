@@ -60,6 +60,7 @@ export type BarsResponse = {
     levels:{kind:"strong_high"|"weak_high"|"strong_low"|"weak_low";price:number;start_timestamp:string}[];
     order_blocks:{bias:"bullish"|"bearish";top:number;bottom:number;start_timestamp:string;confirmed_at_timestamp:string;end_timestamp:string|null;active:boolean;status:"untested"|"touched"|"confirmed_retest"|"pierced";source_volume_ratio:number;breakout_volume_ratio:number;displacement_atr:number;body_atr:number;formation_score:number;freshness_score:number;integrity_score:number;retest_score:number;quality_score:number;age_bars:number;touch_count:number;penetration_ratio:number;close_location:number;rejection_wick_ratio:number;retest_volume_ratio:number;pierced:boolean;first_retest_timestamp:string|null;retest_timestamp:string|null;retest_confirmed:boolean}[];
   };
+  elliott_wave:{active:boolean;state:"scan"|"choch"|"wave2"|"wave3"|"wave4"|"wave5"|"correction_a"|"correction_b"|"correction_c";state_label:string;direction:"bullish"|"bearish"|null;points:{name:string;price:number;pivot_timestamp:string;confirmed_timestamp:string;soft:boolean}[];target_zone:{bottom:number;top:number;center:number}|null;invalidation_price:number|null;warnings:string[];last_reset:{reason:string;timestamp:string}|null};
   base_breakout: null|{timestamp:string;base_type:"cup_handle"|"double_bottom"|"flat_base";stage:string;pivot_price:number;distance_to_pivot_pct:number;breakout_volume_ratio:number;buy_candidate:boolean;confidence:number;arc_source:"close"|"ema12";arc_stage?:string};
   bars: ChartBar[];
 };

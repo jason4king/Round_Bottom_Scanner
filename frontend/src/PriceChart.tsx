@@ -35,6 +35,7 @@ export default function PriceChart({ symbol }: { symbol: string }) {
   const [showTradeLevels,setShowTradeLevels]=useState(()=>localStorage.getItem("chart-trade-levels")!=="false");
   const [showVegas,setShowVegas]=useState(()=>localStorage.getItem("chart-vegas")!=="false");
   const [showTrendlines,setShowTrendlines]=useState(()=>localStorage.getItem("chart-trendlines")!=="false");
+  const [showElliott,setShowElliott]=useState(()=>localStorage.getItem("chart-elliott")!=="false");
 
   useEffect(() => {
     let cancelled = false;
@@ -293,6 +294,16 @@ export default function PriceChart({ symbol }: { symbol: string }) {
         context.fillStyle="rgba(220,232,241,.86)";context.font="10px Inter, Microsoft YaHei, sans-serif";context.textAlign="left";
         context.fillText(`OB ${block.quality_score.toFixed(0)}${block.retest_confirmed?" ✓":""}`,start+4,Math.max(11,zoneTop-3));
       });
+      if(showElliott&&payload.elliott_wave.active){
+        const wave=payload.elliott_wave;
+        const waveColor=wave.direction==="bullish"?"#41d995":"#ff7278";
+        const wavePoints=wave.points.map(point=>({point,x:instance.timeScale().timeToCoordinate(Math.floor(new Date(point.pivot_timestamp).getTime()/1000) as UTCTimestamp),y:candles.priceToCoordinate(point.price)})).filter(item=>item.x!==null&&item.y!==null);
+        if(wavePoints.length>1){context.strokeStyle=waveColor;context.lineWidth=2;context.beginPath();wavePoints.forEach((item,index)=>index===0?context.moveTo(item.x!,item.y!):context.lineTo(item.x!,item.y!));context.stroke()}
+        wavePoints.forEach(({point,x,y})=>{context.fillStyle=waveColor;context.beginPath();context.arc(x!,y!,9,0,Math.PI*2);context.fill();context.fillStyle="#07131e";context.font="bold 10px Inter, sans-serif";context.textAlign="center";context.fillText(`${point.name}${point.soft?"~":""}`,x!,y!+3)});
+        const lastX=wavePoints.at(-1)?.x??0;
+        if(wave.target_zone){const top=candles.priceToCoordinate(wave.target_zone.top),bottom=candles.priceToCoordinate(wave.target_zone.bottom);if(top!==null&&bottom!==null){context.fillStyle="rgba(250,205,75,.16)";context.strokeStyle="rgba(250,205,75,.85)";context.fillRect(lastX!,Math.min(top,bottom),width-lastX!,Math.abs(bottom-top));context.strokeRect(lastX!,Math.min(top,bottom),width-lastX!,Math.abs(bottom-top))}}
+        if(wave.invalidation_price!==null){const y=candles.priceToCoordinate(wave.invalidation_price);if(y!==null){context.strokeStyle="#ff5252";context.setLineDash([7,5]);context.beginPath();context.moveTo(lastX!,y);context.lineTo(width,y);context.stroke();context.setLineDash([]);context.fillStyle="#ff8589";context.font="10px Inter, sans-serif";context.textAlign="right";context.fillText(`INVALID ${wave.invalidation_price.toFixed(2)}`,width-6,y-4)}}
+      }
       payload.market_structure.levels.forEach((level)=>{
         const start=instance.timeScale().timeToCoordinate(Math.floor(new Date(level.start_timestamp).getTime()/1000) as UTCTimestamp), y=candles.priceToCoordinate(level.price);
         if(start===null||y===null)return; context.strokeStyle=level.kind.endsWith("low")?"#2dbfa0":"#ef626c"; context.fillStyle=context.strokeStyle;
@@ -306,12 +317,12 @@ export default function PriceChart({ symbol }: { symbol: string }) {
     rsiInstance.timeScale().subscribeVisibleLogicalRangeChange((range)=>{if(!range||syncing)return;syncing=true;instance.timeScale().setVisibleLogicalRange(range);macdInstance.timeScale().setVisibleLogicalRange(range);syncing=false});
     macdInstance.timeScale().subscribeVisibleLogicalRangeChange((range)=>{if(!range||syncing)return;syncing=true;instance.timeScale().setVisibleLogicalRange(range);rsiInstance.timeScale().setVisibleLogicalRange(range);syncing=false});
     return () => { instance.unsubscribeCrosshairMove(syncMainCrosshair); rsiInstance.unsubscribeCrosshairMove(syncRsiCrosshair); macdInstance.unsubscribeCrosshairMove(syncMacdCrosshair); resizeObserver.disconnect(); overlay.remove(); instance.remove(); rsiInstance.remove(); macdInstance.remove(); if (chart.current === instance) chart.current = null; if(rsiChart.current===rsiInstance)rsiChart.current=null;if(macdChart.current===macdInstance)macdChart.current=null; };
-  }, [payload, timeframe, t, showTradeLevels, showVegas, showTrendlines]);
+  }, [payload, timeframe, t, showTradeLevels, showVegas, showTrendlines, showElliott]);
 
   return <div className="chart-view">
     <div className="chart-toolbar">
       <div className="chart-switches"><div className="period-switch">{periods.map((period) => <button key={period} className={timeframe===period ? "active" : ""} onClick={() => setTimeframe(period)}>{t(period==="4hour"?"fourHour":period)}</button>)}</div><div className="indicator-switch"><button className={indicatorPane==="rsi"?"active":""} onClick={()=>{setIndicatorPane("rsi");localStorage.setItem("chart-indicator-pane","rsi")}}>RSI</button><button className={indicatorPane==="macd"?"active":""} onClick={()=>{setIndicatorPane("macd");localStorage.setItem("chart-indicator-pane","macd")}}>MACD</button></div></div>
-      <div className="chart-contract"><button className={showVegas?"active":""} onClick={()=>setShowVegas((visible)=>{localStorage.setItem("chart-vegas",String(!visible));return !visible})}>{t("vegasChannel")}</button><button className={showTrendlines?"active":""} onClick={()=>setShowTrendlines((visible)=>{localStorage.setItem("chart-trendlines",String(!visible));return !visible})}>{t("trendlines")}</button><button className={showTradeLevels?"active":""} onClick={()=>setShowTradeLevels((visible)=>{localStorage.setItem("chart-trade-levels",String(!visible));return !visible})}>{t("tradeLevels")}</button><span>{t("forward")}</span><span>{t("allSessions")}</span><span>{t("localCache")}</span>{payload && <span>{payload.count} {t("bars")}</span>}</div>
+      <div className="chart-contract"><button className={showVegas?"active":""} onClick={()=>setShowVegas((visible)=>{localStorage.setItem("chart-vegas",String(!visible));return !visible})}>{t("vegasChannel")}</button><button className={showTrendlines?"active":""} onClick={()=>setShowTrendlines((visible)=>{localStorage.setItem("chart-trendlines",String(!visible));return !visible})}>{t("trendlines")}</button><button className={showElliott?"active":""} onClick={()=>setShowElliott((visible)=>{localStorage.setItem("chart-elliott",String(!visible));return !visible})}>Elliott</button><button className={showTradeLevels?"active":""} onClick={()=>setShowTradeLevels((visible)=>{localStorage.setItem("chart-trade-levels",String(!visible));return !visible})}>{t("tradeLevels")}</button><span>{t("forward")}</span><span>{t("allSessions")}</span><span>{t("localCache")}</span>{payload && <span>{payload.count} {t("bars")}</span>}</div>
     </div>
     <div className="chart-legend"><span className="ema12">EMA12</span><span className="yellow">EMA144 / 169</span><span className="green">EMA576 / 676</span><span className="support">{t("trendSupport")}</span><span className="resistance">{t("trendResistance")}</span><span className="structure">{t("marketStructure")}</span><span className="rsi">{t("rsiNote")}</span></div>
     {loading && <div className="chart-message">{t("chartLoading")}</div>}

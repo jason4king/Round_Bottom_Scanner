@@ -31,6 +31,7 @@ from app.watchlist import load_watchlist, save_watchlist
 from app.watchlist import normalize_symbol
 from app.scanner_engine import add_indicators, detect_f3, detect_f9
 from app.market_structure import calculate_market_structure
+from app.elliott_wave import analyze_elliott_impulse
 from trendline_indicator import add_trendline_channels
 
 # Buffer of extra history (beyond the displayed window) fed into indicator
@@ -294,7 +295,7 @@ def get_symbol_bars(
     )
     cached = chart_cache.get(cache_key)
     if cached is not None:
-        full_chart, base_breakout, market_structure = cached
+        full_chart, base_breakout, market_structure, elliott_wave = cached
     else:
         chart = compute_bars.set_index("timestamp_utc")
         chart = add_indicators(chart.rename(columns={"close": "Close"}))
@@ -312,8 +313,9 @@ def get_symbol_bars(
         chart = add_trendline_channels(chart, lookback=240, peak_distance=5)
         structure_radius = {"weekly": 15, "daily": 20, "4hour": 12}[timeframe]
         market_structure = calculate_market_structure(chart, pivot_radius=structure_radius)
+        elliott_wave = analyze_elliott_impulse(chart)
         full_chart = chart
-        chart_cache.set(cache_key, (full_chart, base_breakout, market_structure))
+        chart_cache.set(cache_key, (full_chart, base_breakout, market_structure, elliott_wave))
     # is_closed depends on wall-clock time, not just the cached bar content,
     # so it's always recomputed fresh regardless of a cache hit.
     full_chart = full_chart.copy()
@@ -371,6 +373,7 @@ def get_symbol_bars(
         "trade_session": "all",
         "count": len(payload),
         "market_structure": market_structure,
+        "elliott_wave": elliott_wave,
         "base_breakout": base_breakout,
         "bars": payload,
     }
