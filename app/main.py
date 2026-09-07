@@ -16,7 +16,7 @@ from app.chart_cache import ChartCache
 from app.database import Database
 from app.market_data import LongPortProvider, ParquetBarRepository, _is_closed
 from app.scan_service import ScanService
-from app.scheduler import DailyPushScheduler, FourHourPushScheduler
+from app.scheduler import DailyPushScheduler
 from app.schemas import (
     ScanCreateRequest,
     ScanCreateResponse,
@@ -46,7 +46,6 @@ repository = ParquetBarRepository(settings.parquet_root, settings.cache_retentio
 scan_service = ScanService(settings, database, provider, repository)
 chart_cache = ChartCache()
 daily_push_scheduler = DailyPushScheduler(settings, scan_service, repository)
-four_hour_push_scheduler = FourHourPushScheduler(settings, scan_service, repository)
 
 
 @asynccontextmanager
@@ -56,7 +55,6 @@ async def lifespan(_: FastAPI):
     # calls or WeCom pushes (pytest sets this env var for the running process).
     if "PYTEST_CURRENT_TEST" not in os.environ:
         daily_push_scheduler.start()
-        four_hour_push_scheduler.start()
     try:
         yield
     finally:
