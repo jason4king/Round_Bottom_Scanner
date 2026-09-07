@@ -43,5 +43,28 @@ def test_builds_bullish_wave_one_after_confirmed_choch(monkeypatch):
     assert result["direction"] == "bullish"
     assert result["state"] == "wave2"
     assert [point["name"] for point in result["points"]] == ["0", "1"]
+    assert result["points"][0]["price"] == 90
+    assert result["points"][0]["pivot_timestamp"] == frame.index[40].isoformat()
     assert result["points"][1]["confirmed_timestamp"] > result["points"][1]["pivot_timestamp"]
     assert result["target_zone"]["bottom"] < result["target_zone"]["top"]
+
+
+def test_bearish_wave_zero_uses_prior_major_high(monkeypatch):
+    frame = _frame()
+    frame.iloc[40, frame.columns.get_loc("High")] = 110
+    frame.iloc[50, frame.columns.get_loc("Close")] = 111
+    frame.iloc[48, frame.columns.get_loc("Low")] = 95
+    frame.iloc[52, frame.columns.get_loc("Close")] = 94
+    frame.iloc[53, frame.columns.get_loc("Low")] = 90
+
+    def pivots(_values, radius, high):
+        return {(3, True): {40}, (3, False): {48}, (1, False): {53}}.get((radius, high), set())
+
+    monkeypatch.setattr(elliott, "_pivots", pivots)
+    result = elliott.analyze_elliott_impulse(frame, swing_radius=3, point_radius=1)
+
+    assert result["active"] is True
+    assert result["direction"] == "bearish"
+    assert result["state"] == "wave2"
+    assert result["points"][0]["price"] == 110
+    assert result["points"][0]["pivot_timestamp"] == frame.index[40].isoformat()

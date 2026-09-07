@@ -74,13 +74,18 @@ def analyze_elliott_impulse(
             high_broken = True; was_bear = internal_trend == -1; internal_trend = 1
             if was_bear and state == "scan":
                 direction = 1; state = "choch"; choch_level = highs[slow_high]
-                start = slow_high; p0_index = start + int(np.nanargmin(lows[start:bar + 1]))
+                # Wave 0 belongs to the last opposing major swing before the
+                # CHoCH. Starting at the broken high would discard the actual
+                # impulse origin and often anchor 0 to a later minor low.
+                start = slow_low if slow_low is not None and slow_low < bar else slow_high
+                p0_index = start + int(np.nanargmin(lows[start:bar + 1]))
                 set_directional_point("0", lows[p0_index], p0_index, bar)
         if slow_low is not None and not low_broken and closes[bar] < lows[slow_low] and warmed:
             low_broken = True; was_bull = internal_trend == 1; internal_trend = -1
             if was_bull and state == "scan":
                 direction = -1; state = "choch"; choch_level = lows[slow_low]
-                start = slow_low; p0_index = start + int(np.nanargmax(highs[start:bar + 1]))
+                start = slow_high if slow_high is not None and slow_high < bar else slow_low
+                p0_index = start + int(np.nanargmax(highs[start:bar + 1]))
                 set_directional_point("0", highs[p0_index], p0_index, bar)
 
         pivot_index = bar - point_radius
