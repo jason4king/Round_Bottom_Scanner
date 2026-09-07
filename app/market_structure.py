@@ -142,9 +142,18 @@ def _block(
         "breakout_volume_ratio": round(float(breakout_ratio), 3),
         "displacement_atr": round(float(displacement), 3),
         "body_atr": round(float(body_atr), 3),
-        "quality_score": round(float(base_quality), 1),
+        "formation_score": round(float(base_quality), 1),
+        "freshness_score": 100.0,
+        "integrity_score": 100.0,
+        "retest_score": 0.0,
+        "quality_score": round(float(base_quality * 0.75 + 25.0), 1),
         "age_bars": 0,
         "touch_count": 0,
+        "penetration_ratio": 0.0,
+        "close_location": 0.0,
+        "rejection_wick_ratio": 0.0,
+        "retest_volume_ratio": 1.0,
+        "pierced": False,
         "first_retest_timestamp": None,
         "retest_timestamp": None,
         "retest_confirmed": False,
@@ -152,6 +161,52 @@ def _block(
         "_base_quality": base_quality,
         "_inside": False,
     }
+
+
+def _update_block_quality(block: dict[str, Any], age_bars: int) -> None:
+    freshness = max(0.0, 100.0 - age_bars * 1.5)
+    integrity = max(20.0, 100.0 - max(block["touch_count"] - 1, 0) * 20.0 - (15.0 if block["pierced"] else 0.0))
+    if block["touch_count"]:
+        quality = block["_base_quality"] * 0.45 + block["retest_score"] * 0.35 + freshness * 0.10 + integrity * 0.10
+    else:
+        quality = block["_base_quality"] * 0.75 + freshness * 0.25
+    block["age_bars"] = age_bars
+    block["freshness_score"] = round(freshness, 1)
+    block["integrity_score"] = round(integrity, 1)
+    block["quality_score"] = round(float(quality), 1)
+
+
+def _record_retest(
+    block: dict[str, Any], bar: int, frame: pd.DataFrame, highs: np.ndarray, lows: np.ndarray,
+    opens: np.ndarray, closes: np.ndarray, volume_ratio: np.ndarray,
+) -> None:
+    height = block["top"] - block["bottom"]
+    penetration = max((block["top"] - lows[bar]) / height, 0.0) if height > 0 else 0.0
+    candle_range = highs[bar] - lows[bar]
+    close_location = (closes[bar] - lows[bar]) / candle_range if candle_range > 0 else 0.5
+    if block["bias"] == "bullish":
+        rejection = (min(opens[bar], closes[bar]) - lows[bar]) / candle_range if candle_range > 0 else 0.0
+        direction_score = 100.0 if closes[bar] > opens[bar] else 30.0
+        confirmed = closes[bar] >= block["top"] and closes[bar] > opens[bar]
+        close_score = _clamp(close_location * 100)
+    else:
+        rejection = (highs[bar] - max(opens[bar], closes[bar])) / candle_range if candle_range > 0 else 0.0
+        direction_score = 100.0 if closes[bar] < opens[bar] else 30.0
+        confirmed = closes[bar] <= block["bottom"] and closes[bar] < opens[bar]
+        close_score = _clamp((1.0 - close_location) * 100)
+    penetration_score = _clamp((1.0 - penetration) * 100)
+    retest_volume = volume_ratio[bar] if np.isfinite(volume_ratio[bar]) else 1.0
+    volume_score = _clamp((retest_volume - 0.5) / 1.5 * 100)
+    score = penetration_score * 0.30 + close_score * 0.25 + _clamp(rejection * 200) * 0.20 + volume_score * 0.15 + direction_score * 0.10
+    block["penetration_ratio"] = round(float(penetration), 3)
+    block["close_location"] = round(float(close_location), 3)
+    block["rejection_wick_ratio"] = round(float(rejection), 3)
+    block["retest_volume_ratio"] = round(float(retest_volume), 3)
+    block["retest_score"] = round(float(score), 1)
+    if confirmed:
+        block["retest_confirmed"] = True
+        block["retest_timestamp"] = frame.index[bar].isoformat()
+        block["status"] = "confirmed_retest"
 
 
 def _detect_order_blocks(frame: pd.DataFrame, radius: int) -> list[dict[str, Any]]:
@@ -180,21 +235,26 @@ def _detect_order_blocks(frame: pd.DataFrame, radius: int) -> list[dict[str, Any
         for block in blocks:
             if not block["active"] or bar <= block["_confirmed_index"]:
                 continue
-            invalidated = (block["bias"] == "bullish" and lows[bar] < block["bottom"]) or (block["bias"] == "bearish" and highs[bar] > block["top"])
+            invalidated = (block["bias"] == "bullish" and closes[bar] < block["bottom"]) or (block["bias"] == "bearish" and closes[bar] > block["top"])
             if invalidated:
                 block["active"] = False; block["status"] = "invalidated"; block["end_timestamp"] = frame.index[bar].isoformat()
                 continue
+            pierced = (block["bias"] == "bullish" and lows[bar] < block["bottom"]) or (block["bias"] == "bearish" and highs[bar] > block["top"])
+            if pierced:
+                block["pierced"] = True
+                block["status"] = "pierced"
             inside = lows[bar] <= block["top"] and highs[bar] >= block["bottom"]
             if inside and not block["_inside"]:
                 block["touch_count"] += 1
                 if block["first_retest_timestamp"] is None:
                     block["first_retest_timestamp"] = frame.index[bar].isoformat()
                 block["status"] = "touched"
-            bullish_retest = block["bias"] == "bullish" and inside and closes[bar] >= block["top"] and closes[bar] > opens[bar]
-            bearish_retest = block["bias"] == "bearish" and inside and closes[bar] <= block["bottom"] and closes[bar] < opens[bar]
-            if bullish_retest or bearish_retest:
-                block["retest_confirmed"] = True; block["retest_timestamp"] = frame.index[bar].isoformat(); block["status"] = "confirmed_retest"
+            if inside:
+                _record_retest(block, bar, frame, highs, lows, opens, closes, volume_ratio)
+            if block["pierced"] and not block["retest_confirmed"]:
+                block["status"] = "pierced"
             block["_inside"] = inside
+            _update_block_quality(block, bar - block["_confirmed_index"])
         if latest_high is not None and not crossed_high and closes[bar] > highs[latest_high] and bar > latest_high:
             crossed_high = True; source = latest_high + int(np.nanargmin(lows[latest_high:bar]))
             candidate = _block(frame, source, highs[source], lows[source], "bullish", bar, atr=atr, volume_ratio=volume_ratio, opens=opens, closes=closes, broken_level=highs[latest_high])
@@ -205,9 +265,7 @@ def _detect_order_blocks(frame: pd.DataFrame, radius: int) -> list[dict[str, Any
             _append_best_block(blocks, candidate)
     last_index = len(frame) - 1
     for block in blocks:
-        block["age_bars"] = max(0, last_index - block["_confirmed_index"])
-        freshness_score = max(0.0, 100.0 - block["age_bars"] * 1.5)
-        block["quality_score"] = round(block["_base_quality"] * 0.9 + freshness_score * 0.1, 1)
+        _update_block_quality(block, max(0, last_index - block["_confirmed_index"]))
         for private_key in ("_confirmed_index", "_base_quality", "_inside"):
             block.pop(private_key, None)
     return blocks
@@ -230,6 +288,76 @@ def _append_best_block(blocks: list[dict[str, Any]], candidate: dict[str, Any]) 
     blocks.append(candidate)
 
 
+def bullish_order_block_features(frame: pd.DataFrame, radius: int = 5) -> pd.DataFrame:
+    """Return causal per-bar bullish order-block features for shadow evaluation."""
+    result = pd.DataFrame(index=frame.index)
+    result["distance_pct"] = np.nan
+    result["quality_score"] = np.nan
+    result["formation_score"] = np.nan
+    result["retest_score"] = np.nan
+    result["touch_count"] = 0
+    result["age_bars"] = 0
+    result["retest_confirmed"] = False
+    result["pierced"] = False
+    result["status"] = None
+    if len(frame) < radius * 2 + 3:
+        return result
+    high_col = "High" if "High" in frame else "high" if "high" in frame else None
+    low_col = "Low" if "Low" in frame else "low" if "low" in frame else None
+    open_col = "Open" if "Open" in frame else "open" if "open" in frame else None
+    close_col = "Close" if "Close" in frame else "close" if "close" in frame else None
+    if high_col is None or low_col is None or open_col is None or close_col is None:
+        return result
+    highs = frame[high_col].to_numpy(float); lows = frame[low_col].to_numpy(float)
+    opens = frame[open_col].to_numpy(float); closes = frame[close_col].to_numpy(float)
+    previous_close = np.r_[np.nan, closes[:-1]]
+    true_range = np.nanmax(np.vstack((highs - lows, np.abs(highs - previous_close), np.abs(lows - previous_close))), axis=0)
+    atr = pd.Series(true_range).rolling(14, min_periods=1).mean().to_numpy(float)
+    volume_col = "volume" if "volume" in frame else "Volume" if "Volume" in frame else None
+    volumes = frame[volume_col].to_numpy(float) if volume_col else np.full(len(frame), np.nan)
+    volume_mean = pd.Series(volumes).rolling(20, min_periods=1).mean().to_numpy(float)
+    volume_ratio = np.divide(volumes, volume_mean, out=np.full(len(frame), np.nan), where=np.isfinite(volume_mean) & (volume_mean > 0))
+    high_pivots = set(_pivots(highs, radius, True)); low_pivots = set(_pivots(lows, radius, False))
+    latest_high: int | None = None; latest_low: int | None = None
+    crossed_high = crossed_low = False; blocks: list[dict[str, Any]] = []
+    for bar in range(len(frame)):
+        confirmed = bar - radius
+        if confirmed in high_pivots: latest_high = confirmed; crossed_high = False
+        if confirmed in low_pivots: latest_low = confirmed; crossed_low = False
+        for block in blocks:
+            if not block["active"] or bar <= block["_confirmed_index"]:
+                continue
+            if closes[bar] < block["bottom"]:
+                block["active"] = False; block["status"] = "invalidated"
+                continue
+            if lows[bar] < block["bottom"]:
+                block["pierced"] = True; block["status"] = "pierced"
+            inside = lows[bar] <= block["top"] and highs[bar] >= block["bottom"]
+            if inside and not block["_inside"]:
+                block["touch_count"] += 1
+                block["status"] = "touched"
+            if inside:
+                _record_retest(block, bar, frame, highs, lows, opens, closes, volume_ratio)
+            if block["pierced"] and not block["retest_confirmed"]:
+                block["status"] = "pierced"
+            block["_inside"] = inside
+            _update_block_quality(block, bar - block["_confirmed_index"])
+        active = [block for block in blocks if block["active"] and block["bias"] == "bullish"]
+        if active:
+            selected = min(active, key=lambda block: max((lows[bar] / block["top"] - 1) * 100, 0.0))
+            result.iat[bar, result.columns.get_loc("distance_pct")] = max((lows[bar] / selected["top"] - 1) * 100, 0.0)
+            for column in ("quality_score", "formation_score", "retest_score", "touch_count", "age_bars", "retest_confirmed", "pierced", "status"):
+                result.iat[bar, result.columns.get_loc(column)] = selected[column]
+        if latest_high is not None and not crossed_high and closes[bar] > highs[latest_high] and bar > latest_high:
+            crossed_high = True
+            source = latest_high + int(np.nanargmin(lows[latest_high:bar]))
+            candidate = _block(frame, source, highs[source], lows[source], "bullish", bar, atr=atr, volume_ratio=volume_ratio, opens=opens, closes=closes, broken_level=highs[latest_high])
+            _append_best_block(blocks, candidate)
+        if latest_low is not None and not crossed_low and closes[bar] < lows[latest_low]:
+            crossed_low = True
+    return result
+
+
 def bullish_order_block_distance(frame: pd.DataFrame, radius: int = 5) -> pd.Series:
     """Distance to a bullish block that already existed at each bar; no backfill."""
     result = pd.Series(np.nan, index=frame.index, dtype=float)
@@ -240,18 +368,19 @@ def bullish_order_block_distance(frame: pd.DataFrame, radius: int = 5) -> pd.Ser
     close_col = "Close" if "Close" in frame else "close" if "close" in frame else None
     if high_col is None or low_col is None or close_col is None:
         return result
-    highs=frame[high_col].to_numpy(float); lows=frame[low_col].to_numpy(float); closes=frame[close_col].to_numpy(float)
-    high_pivots=set(_pivots(highs,radius,True)); low_pivots=set(_pivots(lows,radius,False))
-    latest_high: int|None=None; latest_low: int|None=None; crossed_high=crossed_low=False; blocks: list[dict[str,Any]]=[]
+    highs = frame[high_col].to_numpy(float); lows = frame[low_col].to_numpy(float); closes = frame[close_col].to_numpy(float)
+    high_pivots = set(_pivots(highs, radius, True)); low_pivots = set(_pivots(lows, radius, False))
+    latest_high: int | None = None; latest_low: int | None = None
+    crossed_high = crossed_low = False; blocks: list[dict[str, Any]] = []
     for bar in range(len(frame)):
-        confirmed=bar-radius
-        if confirmed in high_pivots: latest_high=confirmed; crossed_high=False
-        if confirmed in low_pivots: latest_low=confirmed; crossed_low=False
+        confirmed = bar - radius
+        if confirmed in high_pivots: latest_high = confirmed; crossed_high = False
+        if confirmed in low_pivots: latest_low = confirmed; crossed_low = False
         for block in blocks:
-            if block["active"] and lows[bar] < block["bottom"]: block["active"]=False
-        distances=[max((lows[bar]/float(block["top"])-1)*100,0.0) for block in blocks if block["active"] and block["bias"]=="bullish"]
-        if distances: result.iloc[bar]=min(distances)
-        if latest_high is not None and not crossed_high and closes[bar]>highs[latest_high] and bar>latest_high:
-            crossed_high=True; source=latest_high+int(np.nanargmin(lows[latest_high:bar])); blocks.append({"bias":"bullish","top":float(highs[source]),"bottom":float(lows[source]),"active":True})
-        if latest_low is not None and not crossed_low and closes[bar]<lows[latest_low]: crossed_low=True
+            if block["active"] and lows[bar] < block["bottom"]: block["active"] = False
+        distances = [max((lows[bar] / float(block["top"]) - 1) * 100, 0.0) for block in blocks if block["active"]]
+        if distances: result.iloc[bar] = min(distances)
+        if latest_high is not None and not crossed_high and closes[bar] > highs[latest_high] and bar > latest_high:
+            crossed_high = True; source = latest_high + int(np.nanargmin(lows[latest_high:bar])); blocks.append({"top": float(highs[source]), "bottom": float(lows[source]), "active": True})
+        if latest_low is not None and not crossed_low and closes[bar] < lows[latest_low]: crossed_low = True
     return result

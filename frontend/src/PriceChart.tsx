@@ -284,8 +284,14 @@ export default function PriceChart({ symbol }: { symbol: string }) {
         const start=instance.timeScale().timeToCoordinate(Math.floor(new Date(block.confirmed_at_timestamp).getTime()/1000) as UTCTimestamp);
         const top=candles.priceToCoordinate(block.top), bottom=candles.priceToCoordinate(block.bottom);
         if(start===null||top===null||bottom===null)return;
-        context.fillStyle=block.bias==="bullish"?"rgba(49,121,245,.18)":"rgba(247,124,128,.18)";
-        context.fillRect(start,Math.min(top,bottom),Math.max(0,width-start),Math.abs(bottom-top));
+        const alpha=.08+Math.min(100,Math.max(0,block.quality_score))*.0018;
+        context.fillStyle=block.bias==="bullish"?`rgba(49,121,245,${alpha})`:`rgba(247,124,128,${alpha})`;
+        const zoneTop=Math.min(top,bottom),zoneHeight=Math.abs(bottom-top),zoneWidth=Math.max(0,width-start);
+        context.fillRect(start,zoneTop,zoneWidth,zoneHeight);
+        context.strokeStyle=block.bias==="bullish"?"rgba(85,155,255,.78)":"rgba(255,145,148,.78)";
+        context.setLineDash(block.pierced?[5,4]:[]);context.strokeRect(start,zoneTop,zoneWidth,zoneHeight);context.setLineDash([]);
+        context.fillStyle="rgba(220,232,241,.86)";context.font="10px Inter, Microsoft YaHei, sans-serif";context.textAlign="left";
+        context.fillText(`OB ${block.quality_score.toFixed(0)}${block.retest_confirmed?" ✓":""}`,start+4,Math.max(11,zoneTop-3));
       });
       payload.market_structure.levels.forEach((level)=>{
         const start=instance.timeScale().timeToCoordinate(Math.floor(new Date(level.start_timestamp).getTime()/1000) as UTCTimestamp), y=candles.priceToCoordinate(level.price);

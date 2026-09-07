@@ -21,6 +21,7 @@ def test_bars_endpoint_reads_local_cache(tmp_path: Path):
         assert "levels" not in response.json()
         last_bar=response.json()["bars"][-1]
         assert {"rsi","rsi_signal","rsi_w_bottom","rsi_bullish_divergence","rsi_order_block_confluence","bullish_order_block_distance_pct","rsi_enhanced_buy","rsi_breakout_buy","rsi_v_bottom_buy","rsi_neckline","rsi_stop_level"} <= set(last_bar)
+        assert {"bullish_order_block_enhanced_distance_pct","bullish_order_block_quality","bullish_order_block_retest_score","bullish_order_block_touch_count","bullish_order_block_age","bullish_order_block_retest_confirmed","bullish_order_block_pierced","bullish_order_block_status"} <= set(last_bar)
         assert {"macd","macd_signal","macd_hist","macd_area","macd_golden_cross","macd_bull_divergence"} <= set(last_bar)
         assert {"macd_divergence_from_timestamp","macd_divergence_from_value","macd_divergence_to_timestamp","macd_divergence_to_value"} <= set(last_bar)
         assert "macd_trend" not in last_bar

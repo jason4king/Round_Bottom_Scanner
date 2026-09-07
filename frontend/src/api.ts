@@ -37,6 +37,8 @@ export type ChartBar = {
   ema12: number; ema144: number; ema169: number; ema576: number; ema676: number;
   rsi: number | null; rsi_signal: number | null;
   rsi_w_bottom: boolean; rsi_bullish_divergence: boolean; rsi_order_block_confluence: boolean; bullish_order_block_distance_pct: number | null; rsi_enhanced_buy: boolean;
+  bullish_order_block_enhanced_distance_pct:number|null;bullish_order_block_quality:number|null;bullish_order_block_retest_score:number|null;
+  bullish_order_block_touch_count:number;bullish_order_block_age:number;bullish_order_block_retest_confirmed:boolean;bullish_order_block_pierced:boolean;bullish_order_block_status:"untested"|"touched"|"confirmed_retest"|"pierced"|null;
   rsi_breakout_buy: boolean; rsi_v_bottom_buy: boolean; rsi_neckline: number | null; rsi_stop_level: number | null;
   rsi_breakout_volume_ratio: number | null;
   macd:number;macd_signal:number;macd_hist:number;macd_area:number;
@@ -56,7 +58,7 @@ export type BarsResponse = {
   market_structure: {
     trend:"bullish"|"bearish"|"neutral";
     levels:{kind:"strong_high"|"weak_high"|"strong_low"|"weak_low";price:number;start_timestamp:string}[];
-    order_blocks:{bias:"bullish"|"bearish";top:number;bottom:number;start_timestamp:string;confirmed_at_timestamp:string;end_timestamp:string|null;active:boolean;status:"untested"|"touched"|"confirmed_retest";source_volume_ratio:number;breakout_volume_ratio:number;displacement_atr:number;body_atr:number;quality_score:number;age_bars:number;touch_count:number;first_retest_timestamp:string|null;retest_timestamp:string|null;retest_confirmed:boolean}[];
+    order_blocks:{bias:"bullish"|"bearish";top:number;bottom:number;start_timestamp:string;confirmed_at_timestamp:string;end_timestamp:string|null;active:boolean;status:"untested"|"touched"|"confirmed_retest"|"pierced";source_volume_ratio:number;breakout_volume_ratio:number;displacement_atr:number;body_atr:number;formation_score:number;freshness_score:number;integrity_score:number;retest_score:number;quality_score:number;age_bars:number;touch_count:number;penetration_ratio:number;close_location:number;rejection_wick_ratio:number;retest_volume_ratio:number;pierced:boolean;first_retest_timestamp:string|null;retest_timestamp:string|null;retest_confirmed:boolean}[];
   };
   base_breakout: null|{timestamp:string;base_type:"cup_handle"|"double_bottom"|"flat_base";stage:string;pivot_price:number;distance_to_pivot_pct:number;breakout_volume_ratio:number;buy_candidate:boolean;confidence:number;arc_source:"close"|"ema12";arc_stage?:string};
   bars: ChartBar[];

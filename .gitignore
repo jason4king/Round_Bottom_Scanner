@@ -9,4 +9,4 @@ data/*.json
 data/market/
 frontend/node_modules/
 frontend/dist/
-
+reports/

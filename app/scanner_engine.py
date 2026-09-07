@@ -6,7 +6,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from app.json_utils import json_safe
-from app.market_structure import bullish_order_block_distance
+from app.market_structure import bullish_order_block_distance, bullish_order_block_features
 
 
 @dataclass
@@ -44,6 +44,16 @@ def add_indicators(frame: pd.DataFrame) -> pd.DataFrame:
     for column, values in _macd_xd(bars).items():
         bars[column] = values
     bars["BULLISH_OB_DISTANCE_PCT"] = bullish_order_block_distance(bars)
+    enhanced_ob = bullish_order_block_features(bars)
+    bars["BULLISH_OB_ENHANCED_DISTANCE_PCT"] = enhanced_ob["distance_pct"]
+    bars["BULLISH_OB_QUALITY"] = enhanced_ob["quality_score"]
+    bars["BULLISH_OB_FORMATION_SCORE"] = enhanced_ob["formation_score"]
+    bars["BULLISH_OB_RETEST_SCORE"] = enhanced_ob["retest_score"]
+    bars["BULLISH_OB_TOUCH_COUNT"] = enhanced_ob["touch_count"]
+    bars["BULLISH_OB_AGE"] = enhanced_ob["age_bars"]
+    bars["BULLISH_OB_RETEST_CONFIRMED"] = enhanced_ob["retest_confirmed"]
+    bars["BULLISH_OB_PIERCED"] = enhanced_ob["pierced"]
+    bars["BULLISH_OB_STATUS"] = enhanced_ob["status"]
     structure = _rsi_bottom_structure(bars)
     for column in structure:
         bars[column] = structure[column]

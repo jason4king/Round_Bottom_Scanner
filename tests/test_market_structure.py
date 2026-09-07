@@ -1,7 +1,12 @@
 import numpy as np
 import pandas as pd
 
-from app.market_structure import _append_best_block, _detect_order_blocks, calculate_market_structure
+from app.market_structure import (
+    _append_best_block,
+    _detect_order_blocks,
+    bullish_order_block_features,
+    calculate_market_structure,
+)
 
 
 def _order_block_frame(close):
@@ -108,3 +113,35 @@ def test_overlapping_order_blocks_keep_the_higher_quality_candidate():
     assert blocks[-1] is candidate
     assert existing["active"] is False
     assert existing["status"] == "superseded"
+
+
+def test_wick_pierce_reduces_integrity_without_invalidating_block():
+    frame = _order_block_frame([10, 9, 8, 9, 10, 11, 12, 11, 10, 9, 8, 7, 6, 7, 8, 9, 10, 11, 12, 13, 6])
+    frame.loc[frame.index[-1], "low"] = 5.0
+
+    bullish = next(block for block in _detect_order_blocks(frame, 2) if block["bias"] == "bullish")
+
+    assert bullish["active"] is True
+    assert bullish["status"] == "pierced"
+    assert bullish["pierced"] is True
+    assert bullish["integrity_score"] == 85.0
+
+
+def test_close_below_block_invalidates_it():
+    frame = _order_block_frame([10, 9, 8, 9, 10, 11, 12, 11, 10, 9, 8, 7, 6, 7, 8, 9, 10, 11, 12, 13, 5])
+
+    bullish = next(block for block in _detect_order_blocks(frame, 2) if block["bias"] == "bullish")
+
+    assert bullish["active"] is False
+    assert bullish["status"] == "invalidated"
+
+
+def test_enhanced_features_are_causal_at_historical_cutoff():
+    frame = _order_block_frame([10, 9, 8, 9, 10, 11, 12, 11, 10, 9, 8, 7, 6, 7, 8, 9, 10, 11, 12, 13, 9, 6.2, 7])
+    cutoff = 21
+
+    historical = bullish_order_block_features(frame.iloc[:cutoff], 2).iloc[-1]
+    complete = bullish_order_block_features(frame, 2).iloc[cutoff - 1]
+
+    for field in ("distance_pct", "quality_score", "formation_score", "retest_score", "touch_count", "age_bars", "retest_confirmed", "pierced", "status"):
+        assert complete[field] == historical[field]
