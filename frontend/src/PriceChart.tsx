@@ -289,8 +289,7 @@ export default function PriceChart({ symbol }: { symbol: string }) {
         context.fillStyle=block.bias==="bullish"?`rgba(49,121,245,${alpha})`:`rgba(247,124,128,${alpha})`;
         const zoneTop=Math.min(top,bottom),zoneHeight=Math.abs(bottom-top),zoneWidth=Math.max(0,width-start);
         context.fillRect(start,zoneTop,zoneWidth,zoneHeight);
-        context.strokeStyle=block.bias==="bullish"?"rgba(85,155,255,.78)":"rgba(255,145,148,.78)";
-        context.setLineDash(block.pierced?[5,4]:[]);context.strokeRect(start,zoneTop,zoneWidth,zoneHeight);context.setLineDash([]);
+        if(block.pierced){context.strokeStyle=block.bias==="bullish"?"rgba(85,155,255,.78)":"rgba(255,145,148,.78)";context.setLineDash([5,4]);context.strokeRect(start,zoneTop,zoneWidth,zoneHeight);context.setLineDash([])}
         context.fillStyle="rgba(220,232,241,.86)";context.font="10px Inter, Microsoft YaHei, sans-serif";context.textAlign="left";
         context.fillText(`OB ${block.quality_score.toFixed(0)}${block.retest_confirmed?" ✓":""}`,start+4,Math.max(11,zoneTop-3));
       });
