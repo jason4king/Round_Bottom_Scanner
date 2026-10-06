@@ -22,6 +22,26 @@ npm.cmd run dev
 
 浏览器访问 `http://127.0.0.1:5173`。
 
+## VPS / VPN 部署（Nginx）
+
+前端使用同源相对地址请求 `/api/...`。VPS 上应由 Nginx 提供 `frontend/dist`，并把 `/api/` 反向代理到仅监听 VPS 本机的 FastAPI `127.0.0.1:8000`。可从 `deploy/nginx-vps.conf.example` 开始配置：替换 VPN 可访问的 `server_name` 和前端 `root` 路径，然后启用该站点。
+
+在 VPS 项目目录构建前端：
+
+```bash
+cd frontend
+npm ci
+npm run build
+```
+
+启动 FastAPI 后，从 VPS 检查后端：
+
+```bash
+curl -i http://127.0.0.1:8000/api/v1/health
+```
+
+再从 VPN 浏览器打开 `http://YOUR_VPS_VPN_NAME_OR_IP/api/v1/health`。两处都应返回 `{"status":"ok"}`；浏览器里图表请求也应是同一主机下的 `/api/v1/symbols/.../bars`，并返回 HTTP 200。不要让浏览器请求其自身的 `127.0.0.1:8000`。
+
 复制 `.env.example` 为 `.env` 并填写 LongPort 凭据。凭据文件已被 `.gitignore` 排除。
 
 当前已经实现股票池读取、DuckDB schema、Parquet 增量缓存、LongPort 三周期真实行情读取、F1～F6 与跨周期评分、后台逐股扫描、任务进度查询、正式结果持久化和两栏 GUI。前端会轮询并显示扫描进度，完成后自动刷新评分。

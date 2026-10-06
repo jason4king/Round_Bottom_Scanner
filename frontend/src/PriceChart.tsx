@@ -326,7 +326,7 @@ export default function PriceChart({ symbol }: { symbol: string }) {
     </div>
     <div className="chart-legend"><span className="ema12">EMA12</span><span className="yellow">EMA144 / 169</span><span className="green">EMA576 / 676</span><span className="support">{t("trendSupport")}</span><span className="resistance">{t("trendResistance")}</span><span className="structure">{t("marketStructure")}</span><span className="rsi">{t("rsiNote")}</span></div>
     {loading && <div className="chart-message">{t("chartLoading")}</div>}
-    {error && <div className="chart-message error"><strong>{t("chartError")}</strong><span>{error}</span><small>{t("syncFirst")}</small></div>}
+    {error && <div className="chart-message error"><strong>{t("chartError")}</strong><span>{error}</span><small>{t("chartErrorHelp")}</small></div>}
     <div className={`chart-stack ${loading || error ? "hidden" : ""}`}><div ref={host} className="chart-host"/>{indicatorPane==="rsi"?<div className="rsi-label">RSI 10 <span>SMA 10</span><i>{t("rsiEnhancedSignal")}</i></div>:<div className="macd-label">MACD XD <span>12/26/9</span><i>{t("macdArea")}: {payload?.bars.at(-1)?.macd_area.toFixed(1)}</i></div>}<div className="indicator-host-stack"><div ref={rsiHost} className={`rsi-host ${indicatorPane!=="rsi"?"indicator-hidden":""}`}/><div ref={macdHost} className={`macd-host ${indicatorPane!=="macd"?"indicator-hidden":""}`}/></div></div>
   </div>;
 }
