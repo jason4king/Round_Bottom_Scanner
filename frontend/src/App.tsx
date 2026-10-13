@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type ScanResult, type SecurityName, type SystemStatus } from "./api";
+import { api, type BarsResponse, type ScanResult, type SecurityName, type SystemStatus } from "./api";
 import PriceChart from "./PriceChart";
 import { DataTab, DiagnosticsTab, HistoryTab, ScoringTab } from "./DetailTabs";
 import AnalysisSidebar from "./AnalysisSidebar";
@@ -43,6 +43,7 @@ export default function App() {
   const [favorites,setFavorites]=useState<string[]>(savedFavorites);
   const [favoriteOnly,setFavoriteOnly]=useState(false);
   const [buySignals,setBuySignals]=useState<{symbol:string;timeframe:string;timestamp:string}[]>([]);
+  const [chartPayloads,setChartPayloads]=useState<Record<string,{timeframe:string;payload:BarsResponse}>>({});
   const [message, setMessage] = useState<UiMessage>({key:"connecting"});
   const [busy, setBusy] = useState(false);
   const [activeRun, setActiveRun] = useState<string | null>(null);
@@ -119,6 +120,16 @@ export default function App() {
   }, [buySignals, favoriteOnly, favorites, query, resultView, results, securityNames, sortOrder, symbols]);
 
   const selectedRow = rows.find((row) => row.symbol === selected) ?? null;
+  function scoreForSymbol(symbol:string){
+    const signal=buySignals.find(item=>item.symbol===symbol),chart=chartPayloads[symbol];
+    if(!signal||!chart||chart.timeframe!==signal.timeframe)return null;
+    const closed=chart.payload.bars.filter(bar=>bar.is_closed);const b=closed.at(-1),p=closed.at(-2);if(!b)return null;
+    const low=Math.min(b.ema144,b.ema169),high=Math.max(b.ema144,b.ema169);
+    const vegas=b.close>=high&&b.ema12>=high&&Boolean(p&&b.ema12>p.ema12)?33:b.close>=low*.98&&b.close<=high*1.03?26:b.close>high&&b.ema12>high?18:b.close>=low*.95?10:0;
+    let rsi=0;if(b.rsi!==null){rsi=b.rsi>=30&&b.rsi<=50?22:b.rsi>50&&b.rsi<=65?16:b.rsi<30?12:b.rsi<=70?8:0;if(b.rsi_signal!==null&&p&&p.rsi!==null&&p.rsi_signal!==null&&b.rsi>b.rsi_signal&&p.rsi<=p.rsi_signal)rsi=Math.min(33,rsi+11);else if(p&&p.rsi!==null&&b.rsi>p.rsi)rsi=Math.min(33,rsi+5);if(b.rsi_bullish_divergence)rsi=Math.min(33,rsi+5)}
+    const distance=b.bullish_order_block_distance_pct;const valid=chart.payload.market_structure.order_blocks.some(block=>block.bias==="bullish"&&block.active&&!block.pierced);let orderBlock=valid&&distance!==null?(distance<=1?34:distance<=2?29:distance<=5?22:distance<=8?12:0):0;if(b.bullish_order_block_retest_confirmed)orderBlock=Math.min(34,orderBlock+5);
+    return {total:vegas+rsi+orderBlock,vegas,rsi,orderBlock};
+  }
 
   async function startScan() {
     setBusy(true);
@@ -149,7 +160,13 @@ export default function App() {
 
   async function showLatestBuySignals(){
     setQuery("");setFavoriteOnly(false);setResultView("pushedBuy");
-    try{const response=await api.latestPushedBuySignals();setBuySignals(response.signals);setSelected(response.signals[0]?.symbol??null)}
+    try{
+      const response=await api.latestPushedBuySignals();setBuySignals(response.signals);setSelected(response.signals[0]?.symbol??null);
+      const chartEntries=await Promise.all(response.signals.map(async signal=>{
+        try{return [signal.symbol,{timeframe:signal.timeframe,payload:await api.bars(signal.symbol,signal.timeframe)}] as const}catch{return null}
+      }));
+      setChartPayloads(current=>({...current,...Object.fromEntries(chartEntries.filter((entry):entry is NonNullable<typeof entry>=>entry!==null))}));
+    }
     catch(error){setBuySignals([]);setMessage({raw:error instanceof Error?error.message:"加载失败"})}
   }
 
@@ -231,7 +248,7 @@ export default function App() {
                 <span className="stock-main">
                   <span className="stock-symbol-line"><strong>{displaySymbol(row.symbol)}</strong>{securityNames[row.symbol]&&<span className="stock-name">{i18n.language.startsWith("zh")?(securityNames[row.symbol].name_cn||securityNames[row.symbol].name_hk||securityNames[row.symbol].name_en):securityNames[row.symbol].name_en}</span>}<button type="button" className={`stock-favorite ${favorites.includes(row.symbol)?"active":""}`} onClick={(event)=>{event.stopPropagation();toggleFavorite(row.symbol)}} aria-label={favorites.includes(row.symbol)?t("removeFavorite"):t("addFavorite")} title={favorites.includes(row.symbol)?t("removeFavorite"):t("addFavorite")}>★</button></span>
                   <small>{row.triggered_factors.length ? row.triggered_factors.join(" · ") : t("waitingFactors")}</small>
-                  {resultView==="pushedBuy"&&buySignals.find(signal=>signal.symbol===row.symbol)&&<small className="push-date">{t("pushedAt")}: {new Date(buySignals.find(signal=>signal.symbol===row.symbol)!.timestamp).toLocaleString(i18n.language.startsWith("zh")?"zh-CN":"en-US",{timeZone:"America/New_York",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"})} ET</small>}
+                  {resultView==="pushedBuy"&&buySignals.find(signal=>signal.symbol===row.symbol)&&<><small className="push-date">{t("pushedAt")}: {new Date(buySignals.find(signal=>signal.symbol===row.symbol)!.timestamp).toLocaleString(i18n.language.startsWith("zh")?"zh-CN":"en-US",{timeZone:"America/New_York",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"})} ET</small>{scoreForSymbol(row.symbol)&&<small className="buy-score-details">{t("buyScore")} {scoreForSymbol(row.symbol)!.total}/100 · {t("vegasShort")} {scoreForSymbol(row.symbol)!.vegas} · RSI10 {scoreForSymbol(row.symbol)!.rsi} · {t("orderBlockShort")} {scoreForSymbol(row.symbol)!.orderBlock}</small>}</>}
                 </span>
                 <span className="stock-score">{row.hasResult ? row.total_score.toFixed(0) : "—"}</span>
                 <span className={`data-state ${row.data_status === "正常" ? "good" : ""}`}>{row.data_status === "正常"?t("normal"):row.data_status === "等待扫描"?t("waitingScan"):row.data_status}</span>
@@ -254,7 +271,7 @@ export default function App() {
           <div className="tab-content">
             {activeTab === "settings" ? <SystemSettingsTab/> : activeTab === "watchlist" ? <WatchlistTab symbols={symbols} onSaved={watchlistSaved}/> :
               !selected ? <EmptyTab tab={activeTab} symbol={selected} hasResult={false}/> :
-              activeTab === "chart" ? <PriceChart symbol={selected}/> :
+              activeTab === "chart" ? <PriceChart symbol={selected} onBarsChange={(payload,timeframe)=>setChartPayloads(current=>payload?{...current,[selected]:{payload,timeframe}}:current)}/> :
               activeTab === "diagnostics" ? <DiagnosticsTab symbol={selected}/> :
               activeTab === "scoring" ? <ScoringTab symbol={selected}/> :
               activeTab === "history" ? <HistoryTab symbol={selected}/> :

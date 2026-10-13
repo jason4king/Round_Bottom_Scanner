@@ -40,8 +40,10 @@ function rememberChartPayload(key: string, value: BarsResponse) {
 
 for (const [key, value] of readChartPayloadCache()) chartPayloadCache.set(key, value);
 
-export default function PriceChart({ symbol }: { symbol: string }) {
+export default function PriceChart({ symbol, onBarsChange }: { symbol: string; onBarsChange?: (payload: BarsResponse | null, timeframe: Timeframe) => void }) {
   const {t}=useTranslation();
+  const onBarsChangeRef=useRef(onBarsChange);
+  onBarsChangeRef.current=onBarsChange;
   const host = useRef<HTMLDivElement>(null);
   const rsiHost = useRef<HTMLDivElement>(null);
   const macdHost = useRef<HTMLDivElement>(null);
@@ -62,11 +64,11 @@ export default function PriceChart({ symbol }: { symbol: string }) {
     let cancelled = false;
     const cacheKey=`${symbol}:${timeframe}`;
     const cached=chartPayloadCache.get(cacheKey);
-    if(cached){chartPayloadCache.delete(cacheKey);chartPayloadCache.set(cacheKey,cached);setPayload(cached);setLoading(false)}
+    if(cached){chartPayloadCache.delete(cacheKey);chartPayloadCache.set(cacheKey,cached);setPayload(cached);onBarsChangeRef.current?.(cached,timeframe);setLoading(false)}
     else{setPayload(null);setLoading(true)}
     setError(null);
     api.bars(symbol, timeframe)
-      .then((data) => { rememberChartPayload(cacheKey,data);if (!cancelled) setPayload(data); })
+      .then((data) => { rememberChartPayload(cacheKey,data);if (!cancelled) {setPayload(data);onBarsChangeRef.current?.(data,timeframe)} })
       .catch((reason: Error) => { if (!cancelled&&!cached) { setPayload(null); setError(reason.message); } })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
