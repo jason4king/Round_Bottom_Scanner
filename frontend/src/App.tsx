@@ -107,6 +107,10 @@ export default function App() {
       .filter((row)=>resultView!=="cupHandle"||row.hasResult&&Boolean(row.f7_pattern))
       .filter((row)=>resultView!=="pushedBuy"||buySignals.some(signal=>signal.symbol===row.symbol))
       .sort((a,b)=>{
+        if(resultView==="pushedBuy"){
+          const pushedAt=(symbol:string)=>buySignals.find(signal=>signal.symbol===symbol)?.timestamp??"";
+          return pushedAt(b.symbol).localeCompare(pushedAt(a.symbol))||a.symbol.localeCompare(b.symbol);
+        }
         if(sortOrder==="scoreAsc")return a.total_score-b.total_score||a.symbol.localeCompare(b.symbol);
         if(sortOrder==="symbolAsc")return a.symbol.localeCompare(b.symbol);
         if(sortOrder==="symbolDesc")return b.symbol.localeCompare(a.symbol);
