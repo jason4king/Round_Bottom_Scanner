@@ -15,11 +15,11 @@ type Tab = (typeof tabs)[number];
 type StockRow = ScanResult & { hasResult: boolean };
 type UiMessage={key:string;values?:Record<string,number|string>}|{raw:string};
 type ResultView="scores"|"roundBottom"|"cupHandle"|"pushedBuy";
-type SortOrder="scoreDesc"|"scoreAsc"|"symbolAsc"|"symbolDesc";
+type SortOrder="scoreDesc"|"scoreAsc"|"symbolAsc"|"symbolDesc"|"pushedAtDesc";
 
 function savedSortOrder():SortOrder{
   const saved=localStorage.getItem("scanner-stock-sort");
-  return saved==="scoreAsc"||saved==="symbolAsc"||saved==="symbolDesc"?saved:"scoreDesc";
+  return saved==="scoreAsc"||saved==="symbolAsc"||saved==="symbolDesc"||saved==="pushedAtDesc"?saved:"scoreDesc";
 }
 
 function savedFavorites():string[]{
@@ -107,7 +107,7 @@ export default function App() {
       .filter((row)=>resultView!=="cupHandle"||row.hasResult&&Boolean(row.f7_pattern))
       .filter((row)=>resultView!=="pushedBuy"||buySignals.some(signal=>signal.symbol===row.symbol))
       .sort((a,b)=>{
-        if(resultView==="pushedBuy"){
+        if(sortOrder==="pushedAtDesc"){
           const pushedAt=(symbol:string)=>buySignals.find(signal=>signal.symbol===symbol)?.timestamp??"";
           return pushedAt(b.symbol).localeCompare(pushedAt(a.symbol))||a.symbol.localeCompare(b.symbol);
         }
@@ -200,6 +200,12 @@ export default function App() {
           </div>
 
           <div className="filters">
+            <button aria-pressed={resultView==="pushedBuy"} className={`quiet-button ${resultView==="pushedBuy"?"active round-bottom-active":""}`} onClick={showLatestBuySignals}>{t("buySignals")}</button>
+            <button aria-pressed={resultView==="roundBottom"} className={`quiet-button ${resultView==="roundBottom"?"active round-bottom-active":""}`} onClick={()=>setResultView("roundBottom")}>{t("roundBottom")}</button>
+            <button aria-pressed={resultView==="cupHandle"} className={`quiet-button ${resultView==="cupHandle"?"active":""}`} onClick={()=>setResultView("cupHandle")}>{t("cupHandle")}</button>
+            <button aria-pressed={resultView==="scores"} className={`quiet-button ${resultView==="scores"?"active":""}`} onClick={()=>setResultView("scores")}>{t("multiPeriod")}</button>
+          </div>
+          <div className="filters">
             <label>
               {t("sortBy")}
               <select value={sortOrder} onChange={(event)=>{const next=event.target.value as SortOrder;setSortOrder(next);localStorage.setItem("scanner-stock-sort",next)}}>
@@ -207,12 +213,9 @@ export default function App() {
                 <option value="scoreAsc">{t("sortScoreAsc")}</option>
                 <option value="symbolAsc">{t("sortSymbolAsc")}</option>
                 <option value="symbolDesc">{t("sortSymbolDesc")}</option>
+                <option value="pushedAtDesc">{t("sortPushedAtDesc")}</option>
               </select>
             </label>
-            <button aria-pressed={resultView==="pushedBuy"} className={`quiet-button ${resultView==="pushedBuy"?"active round-bottom-active":""}`} onClick={showLatestBuySignals}>{t("buySignals")}</button>
-            <button aria-pressed={resultView==="roundBottom"} className={`quiet-button ${resultView==="roundBottom"?"active round-bottom-active":""}`} onClick={()=>setResultView("roundBottom")}>{t("roundBottom")}</button>
-            <button aria-pressed={resultView==="cupHandle"} className={`quiet-button ${resultView==="cupHandle"?"active":""}`} onClick={()=>setResultView("cupHandle")}>{t("cupHandle")}</button>
-            <button aria-pressed={resultView==="scores"} className={`quiet-button ${resultView==="scores"?"active":""}`} onClick={()=>setResultView("scores")}>{t("multiPeriod")}</button>
           </div>
 
           <div className="stock-list">
@@ -228,6 +231,7 @@ export default function App() {
                 <span className="stock-main">
                   <span className="stock-symbol-line"><strong>{displaySymbol(row.symbol)}</strong>{securityNames[row.symbol]&&<span className="stock-name">{i18n.language.startsWith("zh")?(securityNames[row.symbol].name_cn||securityNames[row.symbol].name_hk||securityNames[row.symbol].name_en):securityNames[row.symbol].name_en}</span>}<button type="button" className={`stock-favorite ${favorites.includes(row.symbol)?"active":""}`} onClick={(event)=>{event.stopPropagation();toggleFavorite(row.symbol)}} aria-label={favorites.includes(row.symbol)?t("removeFavorite"):t("addFavorite")} title={favorites.includes(row.symbol)?t("removeFavorite"):t("addFavorite")}>★</button></span>
                   <small>{row.triggered_factors.length ? row.triggered_factors.join(" · ") : t("waitingFactors")}</small>
+                  {resultView==="pushedBuy"&&buySignals.find(signal=>signal.symbol===row.symbol)&&<small className="push-date">{t("pushedAt")}: {new Date(buySignals.find(signal=>signal.symbol===row.symbol)!.timestamp).toLocaleString(i18n.language.startsWith("zh")?"zh-CN":"en-US",{timeZone:"America/New_York",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"})} ET</small>}
                 </span>
                 <span className="stock-score">{row.hasResult ? row.total_score.toFixed(0) : "—"}</span>
                 <span className={`data-state ${row.data_status === "正常" ? "good" : ""}`}>{row.data_status === "正常"?t("normal"):row.data_status === "等待扫描"?t("waitingScan"):row.data_status}</span>

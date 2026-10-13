@@ -56,6 +56,7 @@ h2 { font-size: 21px; letter-spacing: .02em; }
 .stock-main strong, .stock-main small { display: block; }
 .stock-main strong { font-size: 12px; letter-spacing: .035em; }
 .stock-main small { margin-top: 5px; color: #70869b; font-size: 8px; }
+.stock-main small.push-date{color:#56c6a8}
 .stock-symbol-line{display:flex;align-items:center;gap:6px;min-width:0}.stock-name{color:#8fa6ba;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.stock-favorite{padding:0;border:0;background:transparent;color:#344b5f;font-size:14px;line-height:1;cursor:pointer;flex:none}.stock-favorite:hover,.stock-favorite.active{color:#f2b94b;text-shadow:0 0 7px #d89b3199}
 .stock-score { color: #66d8bd; font-size: 20px; font-weight: 750; line-height: 1; }
 .data-state { grid-column: 2; color: #8a9aab; font-size: 8px; text-align: right; }
