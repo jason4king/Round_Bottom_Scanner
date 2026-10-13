@@ -73,6 +73,7 @@ export type AuthSettings={auth_mode:"oauth"|"apikey";oauth_client_id:string|null
 export type ProxySettings={enabled:boolean;host:string;port:number};
 export type SecurityName={name_cn:string|null;name_hk:string|null;name_en:string|null};
 export type SecurityNamesResponse={names:Record<string,SecurityName>;error:string|null};
+export type PushedBuySignal={symbol:string;timeframe:string;timestamp:string};
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
@@ -93,6 +94,7 @@ export const api = {
     body: JSON.stringify({ symbols }),
   }),
   latestResults: () => request<ScanResult[]>("/api/v1/results/latest"),
+  latestPushedBuySignals:()=>request<{signals:PushedBuySignal[]}>("/api/v1/buy-signals/latest"),
   createScan: () =>
     request<{ run_id: string; status: string; message: string }>("/api/v1/scans/local", {
       method: "POST",

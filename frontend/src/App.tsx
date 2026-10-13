@@ -42,6 +42,10 @@ export default function App() {
   const [resultView,setResultView]=useState<ResultView>("scores");
   const [favorites,setFavorites]=useState<string[]>(savedFavorites);
   const [favoriteOnly,setFavoriteOnly]=useState(false);
+  const [buySignalsOpen,setBuySignalsOpen]=useState(false);
+  const [buySignals,setBuySignals]=useState<{symbol:string;timeframe:string;timestamp:string}[]>([]);
+  const [buySignalsLoading,setBuySignalsLoading]=useState(false);
+  const [buySignalsError,setBuySignalsError]=useState("");
   const [message, setMessage] = useState<UiMessage>({key:"connecting"});
   const [busy, setBusy] = useState(false);
   const [activeRun, setActiveRun] = useState<string | null>(null);
@@ -140,6 +144,13 @@ export default function App() {
     });
   }
 
+  async function showLatestBuySignals(){
+    setBuySignalsOpen(true);setBuySignalsLoading(true);setBuySignalsError("");
+    try{const response=await api.latestPushedBuySignals();setBuySignals(response.signals)}
+    catch(error){setBuySignalsError(error instanceof Error?error.message:"加载失败")}
+    finally{setBuySignalsLoading(false)}
+  }
+
   const favoriteCount=favorites.filter(symbol=>symbols.includes(symbol)).length;
 
   return (
@@ -174,6 +185,7 @@ export default function App() {
               <p className="eyebrow">WATCHLIST</p>
               <h1>{t("watchlistScore")}</h1>
             </div>
+            <button type="button" className="buy-signal-button" onClick={showLatestBuySignals}>{t("buySignals")}</button>
             <div className="watchlist-counts">
               <button type="button" className={`favorite-count ${favoriteOnly?"active":""}`} onClick={()=>setFavoriteOnly(true)} title={t("showFavorites")} aria-label={t("showFavorites")}>★ {favoriteCount}</button>
               <button type="button" className={`count-badge ${!favoriteOnly?"active":""}`} onClick={()=>setFavoriteOnly(false)} title={t("showAllStocks")} aria-label={t("showAllStocks")}>{symbols.length}</button>
@@ -245,6 +257,7 @@ export default function App() {
         </section>
         <AnalysisSidebar symbol={selected}/>
       </section>
+      {buySignalsOpen&&<div className="modal-backdrop" role="presentation" onMouseDown={event=>{if(event.target===event.currentTarget)setBuySignalsOpen(false)}}><section className="buy-signals-modal" role="dialog" aria-modal="true" aria-labelledby="buy-signals-title"><header><div><p className="eyebrow">LATEST PUSH</p><h2 id="buy-signals-title">{t("buySignals")}</h2></div><button type="button" className="modal-close" onClick={()=>setBuySignalsOpen(false)} aria-label={t("close")}>×</button></header>{buySignalsLoading?<p className="buy-signals-empty">{t("loading")}</p>:buySignalsError?<p className="buy-signals-empty error">{buySignalsError}</p>:buySignals.length===0?<p className="buy-signals-empty">{t("noPushedBuySignals")}</p>:<div className="buy-signals-list">{buySignals.map(signal=><div key={`${signal.symbol}-${signal.timestamp}`}><strong>{displaySymbol(signal.symbol)}</strong><span>{t(signal.timeframe==="daily"?"daily":"buySignals")}</span><time>{new Date(signal.timestamp).toLocaleString(i18n.language.startsWith("zh")?"zh-CN":"en-US",{timeZone:"America/New_York"})} ET</time></div>)}</div>}</section></div>}
     </main>
   );
 }

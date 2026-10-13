@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
+from app.buy_signal import load_pushed_state
 from app.chart_cache import ChartCache
 from app.database import Database
 from app.market_data import LongPortProvider, ParquetBarRepository, _is_closed
@@ -252,6 +253,20 @@ def get_latest_results() -> list[ScanResultItem]:
         )
         for row in rows
     ]
+
+
+@app.get("/api/v1/buy-signals/latest")
+def get_latest_pushed_buy_signals() -> dict:
+    """Return actual daily close buy signals recorded as pushed to WeCom."""
+    state = load_pushed_state(settings)
+    signals = []
+    for key, timestamp in state.items():
+        if not key.startswith("daily:"):
+            continue
+        _, symbol = key.split(":", 1)
+        signals.append({"symbol": symbol, "timeframe": "daily", "timestamp": timestamp})
+    signals.sort(key=lambda item: (item["timestamp"], item["symbol"]), reverse=True)
+    return {"signals": signals}
 
 
 @app.get("/api/v1/health")
