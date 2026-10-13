@@ -18,6 +18,27 @@ import { useTranslation } from "react-i18next";
 type Timeframe = "weekly" | "daily" | "4hour";
 type IndicatorPane = "rsi" | "macd";
 const periods: Timeframe[] = ["weekly","daily","4hour"];
+const chartPayloadCache = new Map<string, BarsResponse>();
+const CHART_CACHE_STORAGE_KEY = "scanner-chart-payload-cache-v1";
+const CHART_CACHE_MAX_ITEMS = 24;
+
+function readChartPayloadCache(): Map<string, BarsResponse> {
+  try {
+    const saved = JSON.parse(localStorage.getItem(CHART_CACHE_STORAGE_KEY) ?? "[]") as [string, BarsResponse][];
+    return new Map(saved.filter((item): item is [string, BarsResponse] => Array.isArray(item) && item.length === 2 && typeof item[0] === "string" && Boolean(item[1]?.bars)));
+  } catch {
+    return new Map();
+  }
+}
+
+function rememberChartPayload(key: string, value: BarsResponse) {
+  chartPayloadCache.delete(key);
+  chartPayloadCache.set(key, value);
+  while (chartPayloadCache.size > CHART_CACHE_MAX_ITEMS) chartPayloadCache.delete(chartPayloadCache.keys().next().value!);
+  try { localStorage.setItem(CHART_CACHE_STORAGE_KEY, JSON.stringify([...chartPayloadCache])); } catch { /* Keep the in-memory cache when storage is full. */ }
+}
+
+for (const [key, value] of readChartPayloadCache()) chartPayloadCache.set(key, value);
 
 export default function PriceChart({ symbol }: { symbol: string }) {
   const {t}=useTranslation();
@@ -39,10 +60,14 @@ export default function PriceChart({ symbol }: { symbol: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true); setError(null);
+    const cacheKey=`${symbol}:${timeframe}`;
+    const cached=chartPayloadCache.get(cacheKey);
+    if(cached){chartPayloadCache.delete(cacheKey);chartPayloadCache.set(cacheKey,cached);setPayload(cached);setLoading(false)}
+    else{setPayload(null);setLoading(true)}
+    setError(null);
     api.bars(symbol, timeframe)
-      .then((data) => { if (!cancelled) setPayload(data); })
-      .catch((reason: Error) => { if (!cancelled) { setPayload(null); setError(reason.message); } })
+      .then((data) => { rememberChartPayload(cacheKey,data);if (!cancelled) setPayload(data); })
+      .catch((reason: Error) => { if (!cancelled&&!cached) { setPayload(null); setError(reason.message); } })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [symbol, timeframe]);
@@ -325,8 +350,8 @@ export default function PriceChart({ symbol }: { symbol: string }) {
       <div className="chart-contract"><button className={showVegas?"active":""} onClick={()=>setShowVegas((visible)=>{localStorage.setItem("chart-vegas",String(!visible));return !visible})}>{t("vegasChannel")}</button><button className={showTrendlines?"active":""} onClick={()=>setShowTrendlines((visible)=>{localStorage.setItem("chart-trendlines",String(!visible));return !visible})}>{t("trendlines")}</button><button className={showElliott?"active":""} onClick={()=>setShowElliott((visible)=>{localStorage.setItem("chart-elliott",String(!visible));return !visible})}>Elliott</button><button className={showTradeLevels?"active":""} onClick={()=>setShowTradeLevels((visible)=>{localStorage.setItem("chart-trade-levels",String(!visible));return !visible})}>{t("tradeLevels")}</button><span>{t("forward")}</span><span>{t("allSessions")}</span><span>{t("localCache")}</span>{payload && <span>{payload.count} {t("bars")}</span>}</div>
     </div>
     <div className="chart-legend"><span className="ema12">EMA12</span><span className="yellow">EMA144 / 169</span><span className="green">EMA576 / 676</span><span className="support">{t("trendSupport")}</span><span className="resistance">{t("trendResistance")}</span><span className="structure">{t("marketStructure")}</span><span className="rsi">{t("rsiNote")}</span></div>
-    {loading && <div className="chart-message">{t("chartLoading")}</div>}
+    {loading && !payload && <div className="chart-message">{t("chartLoading")}</div>}
     {error && <div className="chart-message error"><strong>{t("chartError")}</strong><span>{error}</span><small>{t("chartErrorHelp")}</small></div>}
-    <div className={`chart-stack ${loading || error ? "hidden" : ""}`}><div ref={host} className="chart-host"/>{indicatorPane==="rsi"?<div className="rsi-label">RSI 10 <span>SMA 10</span><i>{t("rsiEnhancedSignal")}</i></div>:<div className="macd-label">MACD XD <span>12/26/9</span><i>{t("macdArea")}: {payload?.bars.at(-1)?.macd_area.toFixed(1)}</i></div>}<div className="indicator-host-stack"><div ref={rsiHost} className={`rsi-host ${indicatorPane!=="rsi"?"indicator-hidden":""}`}/><div ref={macdHost} className={`macd-host ${indicatorPane!=="macd"?"indicator-hidden":""}`}/></div></div>
+    <div className={`chart-stack ${!payload ? "hidden" : ""}`}><div ref={host} className="chart-host"/>{indicatorPane==="rsi"?<div className="rsi-label">RSI 10 <span>SMA 10</span><i>{t("rsiEnhancedSignal")}</i></div>:<div className="macd-label">MACD XD <span>12/26/9</span><i>{t("macdArea")}: {payload?.bars.at(-1)?.macd_area.toFixed(1)}</i></div>}<div className="indicator-host-stack"><div ref={rsiHost} className={`rsi-host ${indicatorPane!=="rsi"?"indicator-hidden":""}`}/><div ref={macdHost} className={`macd-host ${indicatorPane!=="macd"?"indicator-hidden":""}`}/></div></div>
   </div>;
 }
