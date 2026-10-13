@@ -232,6 +232,7 @@ def build_wecom_message(symbol: str, signal: BuySignal, total_score: float, trig
         f"{signal.label}",
         "",
         f"现价 {signal.last_price:.2f}　综合评分 {total_score:.1f}",
+        f"RSI10 {signal.details['rsi']:.1f}" if signal.details.get("rsi") is not None else "RSI10 N/A",
         f"触发因子：{'+'.join(triggered_factors) if triggered_factors else '无'}",
     ]
     d = signal.details
