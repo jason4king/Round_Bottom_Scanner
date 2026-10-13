@@ -14,7 +14,7 @@ type Tab = (typeof tabs)[number];
 
 type StockRow = ScanResult & { hasResult: boolean };
 type UiMessage={key:string;values?:Record<string,number|string>}|{raw:string};
-type ResultView="scores"|"roundBottom"|"cupHandle";
+type ResultView="scores"|"roundBottom"|"cupHandle"|"pushedBuy";
 type SortOrder="scoreDesc"|"scoreAsc"|"symbolAsc"|"symbolDesc";
 
 function savedSortOrder():SortOrder{
@@ -42,10 +42,7 @@ export default function App() {
   const [resultView,setResultView]=useState<ResultView>("scores");
   const [favorites,setFavorites]=useState<string[]>(savedFavorites);
   const [favoriteOnly,setFavoriteOnly]=useState(false);
-  const [buySignalsOpen,setBuySignalsOpen]=useState(false);
   const [buySignals,setBuySignals]=useState<{symbol:string;timeframe:string;timestamp:string}[]>([]);
-  const [buySignalsLoading,setBuySignalsLoading]=useState(false);
-  const [buySignalsError,setBuySignalsError]=useState("");
   const [message, setMessage] = useState<UiMessage>({key:"connecting"});
   const [busy, setBusy] = useState(false);
   const [activeRun, setActiveRun] = useState<string | null>(null);
@@ -92,7 +89,8 @@ export default function App() {
 
   const rows = useMemo<StockRow[]>(() => {
     const bySymbol = new Map(results.map((result) => [result.symbol, result]));
-    return symbols
+    const visibleSymbols=resultView==="pushedBuy"?[...new Set([...buySignals.map(signal=>signal.symbol),...symbols])]:symbols;
+    return visibleSymbols
       .map((symbol) => {
         const result = bySymbol.get(symbol);
         return result
@@ -104,16 +102,17 @@ export default function App() {
         const names=securityNames[row.symbol];
         return row.symbol.includes(search)||[names?.name_cn,names?.name_hk,names?.name_en].some(name=>name?.toLocaleUpperCase().includes(search));
       })
-      .filter((row)=>!favoriteOnly||favorites.includes(row.symbol))
+      .filter((row)=>resultView==="pushedBuy"||!favoriteOnly||favorites.includes(row.symbol))
       .filter((row)=>resultView!=="roundBottom"||row.hasResult&&row.breakout_patterns.some(pattern=>pattern.buy_candidate))
       .filter((row)=>resultView!=="cupHandle"||row.hasResult&&Boolean(row.f7_pattern))
+      .filter((row)=>resultView!=="pushedBuy"||buySignals.some(signal=>signal.symbol===row.symbol))
       .sort((a,b)=>{
         if(sortOrder==="scoreAsc")return a.total_score-b.total_score||a.symbol.localeCompare(b.symbol);
         if(sortOrder==="symbolAsc")return a.symbol.localeCompare(b.symbol);
         if(sortOrder==="symbolDesc")return b.symbol.localeCompare(a.symbol);
         return b.total_score-a.total_score||a.symbol.localeCompare(b.symbol);
       });
-  }, [favoriteOnly, favorites, query, resultView, results, securityNames, sortOrder, symbols]);
+  }, [buySignals, favoriteOnly, favorites, query, resultView, results, securityNames, sortOrder, symbols]);
 
   const selectedRow = rows.find((row) => row.symbol === selected) ?? null;
 
@@ -145,10 +144,9 @@ export default function App() {
   }
 
   async function showLatestBuySignals(){
-    setBuySignalsOpen(true);setBuySignalsLoading(true);setBuySignalsError("");
-    try{const response=await api.latestPushedBuySignals();setBuySignals(response.signals)}
-    catch(error){setBuySignalsError(error instanceof Error?error.message:"加载失败")}
-    finally{setBuySignalsLoading(false)}
+    setQuery("");setFavoriteOnly(false);setResultView("pushedBuy");
+    try{const response=await api.latestPushedBuySignals();setBuySignals(response.signals);setSelected(response.signals[0]?.symbol??null)}
+    catch(error){setBuySignals([]);setMessage({raw:error instanceof Error?error.message:"加载失败"})}
   }
 
   const favoriteCount=favorites.filter(symbol=>symbols.includes(symbol)).length;
@@ -185,7 +183,6 @@ export default function App() {
               <p className="eyebrow">WATCHLIST</p>
               <h1>{t("watchlistScore")}</h1>
             </div>
-            <button type="button" className="buy-signal-button" onClick={showLatestBuySignals}>{t("buySignals")}</button>
             <div className="watchlist-counts">
               <button type="button" className={`favorite-count ${favoriteOnly?"active":""}`} onClick={()=>setFavoriteOnly(true)} title={t("showFavorites")} aria-label={t("showFavorites")}>★ {favoriteCount}</button>
               <button type="button" className={`count-badge ${!favoriteOnly?"active":""}`} onClick={()=>setFavoriteOnly(false)} title={t("showAllStocks")} aria-label={t("showAllStocks")}>{symbols.length}</button>
@@ -208,6 +205,7 @@ export default function App() {
                 <option value="symbolDesc">{t("sortSymbolDesc")}</option>
               </select>
             </label>
+            <button aria-pressed={resultView==="pushedBuy"} className={`quiet-button ${resultView==="pushedBuy"?"active round-bottom-active":""}`} onClick={showLatestBuySignals}>{t("buySignals")}</button>
             <button aria-pressed={resultView==="roundBottom"} className={`quiet-button ${resultView==="roundBottom"?"active round-bottom-active":""}`} onClick={()=>setResultView("roundBottom")}>{t("roundBottom")}</button>
             <button aria-pressed={resultView==="cupHandle"} className={`quiet-button ${resultView==="cupHandle"?"active":""}`} onClick={()=>setResultView("cupHandle")}>{t("cupHandle")}</button>
             <button aria-pressed={resultView==="scores"} className={`quiet-button ${resultView==="scores"?"active":""}`} onClick={()=>setResultView("scores")}>{t("multiPeriod")}</button>
@@ -257,7 +255,6 @@ export default function App() {
         </section>
         <AnalysisSidebar symbol={selected}/>
       </section>
-      {buySignalsOpen&&<div className="modal-backdrop" role="presentation" onMouseDown={event=>{if(event.target===event.currentTarget)setBuySignalsOpen(false)}}><section className="buy-signals-modal" role="dialog" aria-modal="true" aria-labelledby="buy-signals-title"><header><div><p className="eyebrow">LATEST PUSH</p><h2 id="buy-signals-title">{t("buySignals")}</h2></div><button type="button" className="modal-close" onClick={()=>setBuySignalsOpen(false)} aria-label={t("close")}>×</button></header>{buySignalsLoading?<p className="buy-signals-empty">{t("loading")}</p>:buySignalsError?<p className="buy-signals-empty error">{buySignalsError}</p>:buySignals.length===0?<p className="buy-signals-empty">{t("noPushedBuySignals")}</p>:<div className="buy-signals-list">{buySignals.map(signal=><div key={`${signal.symbol}-${signal.timestamp}`}><strong>{displaySymbol(signal.symbol)}</strong><span>{t(signal.timeframe==="daily"?"daily":"buySignals")}</span><time>{new Date(signal.timestamp).toLocaleString(i18n.language.startsWith("zh")?"zh-CN":"en-US",{timeZone:"America/New_York"})} ET</time></div>)}</div>}</section></div>}
     </main>
   );
 }
