@@ -187,7 +187,7 @@ export default function App() {
               <p className="eyebrow">WATCHLIST</p>
               <h1>{t("watchlistScore")}</h1>
             </div>
-            <button type="button" aria-pressed={resultView==="pushedBuy"} className={`quiet-button heading-buy-button ${resultView==="pushedBuy"?"active round-bottom-active":""}`} onClick={showLatestBuySignals}>{t("buySignals")}</button>
+            <button type="button" aria-pressed={resultView==="pushedBuy"} className={`count-badge heading-buy-button ${resultView==="pushedBuy"?"buy-active":""}`} onClick={showLatestBuySignals}>{t("buySignals")}</button>
             <div className="watchlist-counts">
               <button type="button" className={`favorite-count ${favoriteOnly?"active":""}`} onClick={()=>setFavoriteOnly(true)} title={t("showFavorites")} aria-label={t("showFavorites")}>★ {favoriteCount}</button>
               <button type="button" className={`count-badge ${!favoriteOnly?"active":""}`} onClick={()=>setFavoriteOnly(false)} title={t("showAllStocks")} aria-label={t("showAllStocks")}>{symbols.length}</button>
