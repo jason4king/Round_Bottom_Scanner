@@ -107,7 +107,7 @@ export default function App() {
       .filter((row)=>resultView!=="cupHandle"||row.hasResult&&Boolean(row.f7_pattern))
       .filter((row)=>resultView!=="pushedBuy"||buySignals.some(signal=>signal.symbol===row.symbol))
       .sort((a,b)=>{
-        if(sortOrder==="pushedAtDesc"){
+        if(resultView==="pushedBuy"&&sortOrder==="pushedAtDesc"){
           const pushedAt=(symbol:string)=>buySignals.find(signal=>signal.symbol===symbol)?.timestamp??"";
           return pushedAt(b.symbol).localeCompare(pushedAt(a.symbol))||a.symbol.localeCompare(b.symbol);
         }
