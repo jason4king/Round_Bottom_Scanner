@@ -40,7 +40,7 @@ h2 { font-size: 21px; letter-spacing: .02em; }
 .search-clear:hover { border-color: #d08845; background: #2a211b; color: #f0a23a; }
 .filters { display: grid; grid-template-columns: repeat(4,1fr); gap: 5px; margin-top: 10px; }
 .filters label, .quiet-button { border: 1px solid #22364a; border-radius: 5px; background: #0e1b2a; color: #8398ad; font-size: 9px; }
-.filters label { grid-column:1/-1; display: flex; align-items: center; justify-content: space-between; padding-left: 9px; }
+.filters label { grid-column:1/-1; display: flex; align-items: center; justify-content: space-between; padding: 3px 7px 3px 9px; }
 .filters select { border: 0; padding: 7px; background: transparent; color: #c6d5e4; outline: 0; }
 .filters option { background: #0e1b2a; }
 .quiet-button { padding: 0 7px; cursor: pointer; }

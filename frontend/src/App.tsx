@@ -200,14 +200,9 @@ export default function App() {
           </div>
 
           <div className="filters">
-            <button aria-pressed={resultView==="pushedBuy"} className={`quiet-button ${resultView==="pushedBuy"?"active round-bottom-active":""}`} onClick={showLatestBuySignals}>{t("buySignals")}</button>
-            <button aria-pressed={resultView==="roundBottom"} className={`quiet-button ${resultView==="roundBottom"?"active round-bottom-active":""}`} onClick={()=>setResultView("roundBottom")}>{t("roundBottom")}</button>
-            <button aria-pressed={resultView==="cupHandle"} className={`quiet-button ${resultView==="cupHandle"?"active":""}`} onClick={()=>setResultView("cupHandle")}>{t("cupHandle")}</button>
-            <button aria-pressed={resultView==="scores"} className={`quiet-button ${resultView==="scores"?"active":""}`} onClick={()=>setResultView("scores")}>{t("multiPeriod")}</button>
-          </div>
-          <div className="filters">
             <label>
-              {t("sortBy")}
+              <button aria-pressed={resultView==="pushedBuy"} className={`quiet-button ${resultView==="pushedBuy"?"active round-bottom-active":""}`} onClick={showLatestBuySignals}>{t("buySignals")}</button>
+              <span>{t("sortBy")}</span>
               <select value={sortOrder} onChange={(event)=>{const next=event.target.value as SortOrder;setSortOrder(next);localStorage.setItem("scanner-stock-sort",next)}}>
                 <option value="scoreDesc">{t("sortScoreDesc")}</option>
                 <option value="scoreAsc">{t("sortScoreAsc")}</option>
@@ -216,6 +211,11 @@ export default function App() {
                 <option value="pushedAtDesc">{t("sortPushedAtDesc")}</option>
               </select>
             </label>
+          </div>
+          <div className="filters">
+            <button aria-pressed={resultView==="roundBottom"} className={`quiet-button ${resultView==="roundBottom"?"active round-bottom-active":""}`} onClick={()=>setResultView("roundBottom")}>{t("roundBottom")}</button>
+            <button aria-pressed={resultView==="cupHandle"} className={`quiet-button ${resultView==="cupHandle"?"active":""}`} onClick={()=>setResultView("cupHandle")}>{t("cupHandle")}</button>
+            <button aria-pressed={resultView==="scores"} className={`quiet-button ${resultView==="scores"?"active":""}`} onClick={()=>setResultView("scores")}>{t("multiPeriod")}</button>
           </div>
 
           <div className="stock-list">
