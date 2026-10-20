@@ -17,7 +17,6 @@ from app.scan_service import ScanService
 SCAN_POLL_SECONDS = 5
 PUSH_GAP_SECONDS = 1.5
 TICK_SECONDS = 60
-RETRY_SECONDS = 15 * 60
 
 def _run_scan_and_dispatch(
     scan_service: ScanService,
@@ -34,7 +33,7 @@ def _run_scan_and_dispatch(
         info = scan_service.run_status(run_id)
         if info and info["status"] in ("completed", "completed_with_errors", "failed"):
             break
-    if info["status"] != "completed":
+    if info["status"] not in ("completed", "completed_with_errors"):
         return False
     _dispatch_signals(scan_service, repository, settings, run_id, push_timeframes)
     return True
@@ -85,21 +84,43 @@ class DailyPushScheduler:
         self.scan_service = scan_service
         self.repository = repository
         self._state_path = settings.database_path.parent / "daily_push_state.json"
-        self._last_attempt_at: float | None = None
+        self._skip_startup_date: str | None = None
 
     def start(self) -> None:
+        now_ny = pd.Timestamp.now(tz="America/New_York")
+        if now_ny.time() >= self.DISPATCH_TIME:
+            # A service restart after the dispatch time must not immediately
+            # launch a full-universe catch-up scan on a constrained VPS.
+            self._skip_startup_date = now_ny.strftime("%Y-%m-%d")
         threading.Thread(target=self._loop, daemon=True).start()
 
-    def _last_dispatch_date(self) -> str | None:
+    def _read_state(self) -> dict[str, str]:
         if not self._state_path.is_file():
-            return None
+            return {}
         try:
-            return json.loads(self._state_path.read_text(encoding="utf-8")).get("last_dispatch_date")
+            state = json.loads(self._state_path.read_text(encoding="utf-8"))
+            return state if isinstance(state, dict) else {}
         except (OSError, ValueError):
-            return None
+            return {}
+
+    def _last_dispatch_date(self) -> str | None:
+        return self._read_state().get("last_dispatch_date")
+
+    def _last_attempt_date(self) -> str | None:
+        return self._read_state().get("last_attempt_date")
+
+    def _save_state(self, **updates: str) -> None:
+        state = self._read_state()
+        state.update(updates)
+        temporary = self._state_path.with_suffix(self._state_path.suffix + ".tmp")
+        temporary.write_text(json.dumps(state), encoding="utf-8")
+        temporary.replace(self._state_path)
 
     def _save_dispatch_date(self, date_str: str) -> None:
-        self._state_path.write_text(json.dumps({"last_dispatch_date": date_str}), encoding="utf-8")
+        self._save_state(last_dispatch_date=date_str)
+
+    def _save_attempt_date(self, date_str: str) -> None:
+        self._save_state(last_attempt_date=date_str)
 
     def _loop(self) -> None:
         while True:
@@ -116,14 +137,19 @@ class DailyPushScheduler:
             return
         if now_ny.time() < self.DISPATCH_TIME:
             return
+        if self._skip_startup_date == today:
+            return
         if self._last_dispatch_date() == today:
+            return
+        if self._last_attempt_date() == today:
             return
         if self.scan_service.active:
             return
-        now_monotonic = time.monotonic()
-        if self._last_attempt_at is not None and now_monotonic - self._last_attempt_at < RETRY_SECONDS:
+        if not self.scan_service.provider.configured:
             return
-        self._last_attempt_at = now_monotonic
+        # Persist before starting work so a restart or failed partial run does
+        # not launch another full scan later the same day.
+        self._save_attempt_date(today)
         succeeded = _run_scan_and_dispatch(
             self.scan_service, self.repository, self.settings, TIMEFRAMES, ("daily",)
         )
