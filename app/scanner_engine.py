@@ -35,6 +35,21 @@ TIMEFRAME_MULTIPLIERS = {
 
 def add_indicators(frame: pd.DataFrame) -> pd.DataFrame:
     bars = frame.copy()
+    # Bad cache rows can contain zero or non-finite OHLC values (for example,
+    # a zero-filled first bar for a newly listed symbol). Exclude those rows
+    # before they distort moving averages or downstream price calculations.
+    ohlc = [column for column in ("Open", "High", "Low", "Close") if column in bars]
+    if ohlc:
+        prices = bars[ohlc].apply(pd.to_numeric, errors="coerce")
+        valid = np.isfinite(prices).all(axis=1) & prices.gt(0).all(axis=1)
+        if {"Open", "High", "Low", "Close"}.issubset(prices.columns):
+            valid &= prices["High"].ge(prices[["Open", "Close", "Low"]].max(axis=1))
+            valid &= prices["Low"].le(prices[["Open", "Close", "High"]].min(axis=1))
+        bars = bars.loc[valid].copy()
+        for column in ohlc:
+            bars[column] = prices.loc[valid, column].astype(float)
+    if bars.empty:
+        raise ValueError("No valid OHLC bars remain after filtering invalid price rows")
     for period in (12, 144, 169, 576, 676):
         bars[f"EMA{period}"] = bars["Close"].ewm(span=period, adjust=False).mean()
     bars["RSI10"] = _wilder_rsi(bars["Close"], 10)
@@ -78,7 +93,8 @@ def _macd_xd(bars: pd.DataFrame) -> pd.DataFrame:
     highs=bars[high_column].to_numpy(float) if high_column else close.to_numpy(float)
     lows=bars[low_column].to_numpy(float) if low_column else close.to_numpy(float)
     values=hist.to_numpy(float);macd_values=macd.to_numpy(float)
-    ratio=1000/float(close.iloc[0]) if len(close) and float(close.iloc[0])<10 else 1.0
+    first_close = float(close.iloc[0]) if len(close) else float("nan")
+    ratio = 1000 / first_close if np.isfinite(first_close) and 0 < first_close < 10 else 1.0
     prior_by_sign:dict[int,dict[str,float]]={};start=0
     while start<len(values):
         sign=1 if values[start]>=0 else -1;end=start
