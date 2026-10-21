@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 import pandas as pd
 from app.config import Settings
 from app.database import Database
-from app.market_data import LongPortProvider, ParquetBarRepository, TIMEFRAMES, _is_closed, cache_needs_sync
+from app.market_data import LongPortProvider, ParquetBarRepository, TIMEFRAMES, _NYSE_CALENDAR, _is_closed, cache_needs_sync
 from app.scanner_engine import scan_symbol
 from app.watchlist import load_watchlist
 from app.json_utils import json_safe
@@ -59,6 +59,37 @@ class ScanService:
             rows = c.execute("SELECT symbol,total_score,triggered_factors_json FROM scan_results WHERE run_id=?",[run_id]).fetchall()
         return {row[0]: {"total_score": row[1], "triggered_factors": json.loads(row[2])} for row in rows}
 
+    def _has_successful_sync_today(self, symbols: list[str]) -> bool:
+        now_ny = pd.Timestamp.now(tz="America/New_York")
+        today_ny = now_ny.date()
+        today_start_utc = pd.Timestamp(today_ny).tz_localize("America/New_York").tz_convert("UTC")
+        session = pd.Timestamp(today_ny)
+        required_after = None
+        if _NYSE_CALENDAR.is_session(session):
+            close_ny = _NYSE_CALENDAR.session_close(session).tz_convert("America/New_York")
+            if now_ny >= close_ny:
+                required_after = close_ny
+        with self.database.connect(read_only=True) as c:
+            rows = c.execute(
+                "SELECT watchlist_json,symbols_total,sync_succeeded,sync_failed,sync_completed_at,config_json FROM scan_runs WHERE sync_completed_at>=? ORDER BY sync_completed_at DESC",
+                [today_start_utc],
+            ).fetchall()
+        for watchlist_json, total, synced, failed, completed_at, config_json in rows:
+            completed_ny = pd.Timestamp(completed_at).tz_convert("America/New_York")
+            is_full_sync = json.loads(config_json).get("sync_timeframes") == list(TIMEFRAMES)
+            if completed_ny.date() == today_ny and is_full_sync and json.loads(watchlist_json) == symbols:
+                return (total == len(symbols) and synced == total and failed == 0
+                        and (required_after is None or completed_ny >= required_after))
+        return False
+
+    def create_interactive_run(self) -> tuple[UUID, str, str]:
+        """Reuse today's full-watchlist sync; otherwise sync before scoring."""
+        symbols = load_watchlist(self.settings.watchlist_path).symbols
+        already_synced = self._has_successful_sync_today(symbols)
+        timeframes = () if already_synced else TIMEFRAMES
+        message = "\u4eca\u65e5\u5168\u80a1\u7968\u6c60\u884c\u60c5\u5df2\u540c\u6b65\uff0c\u5f00\u59cb\u672c\u5730\u8bc4\u5206" if already_synced else "\u4eca\u65e5\u884c\u60c5\u5c1a\u672a\u5b8c\u6574\u540c\u6b65\uff0c\u5148\u540c\u6b65 K \u7ebf\u518d\u8bc4\u5206"
+        return self.create_run("official", timeframes, start_message=message)
+
     def sync_symbol(self, symbol: str) -> dict[str, int]:
         """Force an immediate LongPort refresh of one symbol's cached bars, all timeframes."""
         if self.active:
@@ -78,7 +109,7 @@ class ScanService:
             updated[tf] = len(merged)
         return updated
 
-    def create_run(self,run_type:str,sync_timeframes:tuple[str,...]=TIMEFRAMES)->tuple[UUID,str,str]:
+    def create_run(self,run_type:str,sync_timeframes:tuple[str,...]=TIMEFRAMES,start_message:str|None=None)->tuple[UUID,str,str]:
         with self._lock:
             if self._active_run_id:return self._active_run_id,"running","已有扫描任务正在运行"
             if sync_timeframes and not self.provider.configured:raise RuntimeError("LongPort 凭据尚未配置")
@@ -89,7 +120,7 @@ class ScanService:
             initial_phase = "syncing" if sync_timeframes else "scanning"
             with self.database.connect() as c:c.execute("INSERT INTO scan_runs (run_id,run_type,status,started_at,algorithm_version,config_version,config_json,config_hash,watchlist_json,symbols_total,phase) VALUES (?,?,'running',?,?,?,?,?,?,?,?)",[run_id,run_type,datetime.now(timezone.utc),self.settings.algorithm_version,self.settings.config_version,cfg_json,cfg_hash,json.dumps(symbols),len(symbols),initial_phase])
             self._active_run_id=run_id; threading.Thread(target=self._execute,args=(run_id,run_type,symbols,sync_timeframes),daemon=True).start()
-            return run_id,"running","行情同步与扫描已开始"
+            return run_id,"running",start_message or "Scan started"
 
     def _execute(self,run_id:UUID,run_type:str,symbols:list[str],sync_timeframes:tuple[str,...]=TIMEFRAMES)->None:
         succeeded=failed=sync_succeeded=sync_failed=0; errors=[]; cutoff=None; status="failed"
@@ -126,7 +157,10 @@ class ScanService:
                     with self.database.connect() as c:
                         c.execute("UPDATE scan_runs SET sync_succeeded=?, sync_failed=? WHERE run_id=?", [sync_succeeded, sync_failed, run_id])
             with self.database.connect() as c:
-                c.execute("UPDATE scan_runs SET phase='scanning' WHERE run_id=?", [run_id])
+                if sync_timeframes:
+                    c.execute("UPDATE scan_runs SET phase='scanning',sync_completed_at=current_timestamp WHERE run_id=?", [run_id])
+                else:
+                    c.execute("UPDATE scan_runs SET phase='scanning' WHERE run_id=?", [run_id])
             for symbol in symbols:
                 try:
                     if symbol in sync_errors:

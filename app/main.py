@@ -194,9 +194,9 @@ def create_scan(request: ScanCreateRequest) -> ScanCreateResponse:
 
 @app.post("/api/v1/scans/local", response_model=ScanCreateResponse, status_code=202)
 def create_local_scan() -> ScanCreateResponse:
-    """Run an official scan using only bars already stored in Parquet."""
+    """Reuse today's complete watchlist sync, or sync all bars before scoring."""
     try:
-        run_id, status, message = scan_service.create_run("official", ())
+        run_id, status, message = scan_service.create_interactive_run()
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return ScanCreateResponse(run_id=str(run_id), status=status, message=message)

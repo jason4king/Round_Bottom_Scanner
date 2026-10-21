@@ -137,7 +137,7 @@ export default function App() {
     setBusy(true);
     try {
       const response = await api.createScan();
-      setMessage({key:"scanStarted",values:{id:response.run_id.slice(0,8)}});
+      setMessage({raw:response.message});
       setActiveRun(response.run_id);
     } catch (error) {
       setMessage({raw:error instanceof Error ? error.message : "创建扫描任务失败"});
