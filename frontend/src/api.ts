@@ -28,6 +28,9 @@ export type ScanStatus = {
   symbols_total: number;
   symbols_succeeded: number;
   symbols_failed: number;
+  phase: "syncing" | "scanning" | "completed";
+  sync_succeeded: number;
+  sync_failed: number;
   errors: { symbol?: string; message: string }[];
 };
 

@@ -68,7 +68,9 @@ export default function App() {
     const timer = window.setInterval(async () => {
       try {
         const run = await api.scanStatus(activeRun);
-        setMessage({key:"scanProgress",values:{succeeded:run.symbols_succeeded,total:run.symbols_total,failed:run.symbols_failed}});
+        setMessage(run.phase === "syncing"
+          ? {key:"syncProgress",values:{succeeded:run.sync_succeeded,total:run.symbols_total,failed:run.sync_failed}}
+          : {key:"scanProgress",values:{succeeded:run.symbols_succeeded,total:run.symbols_total,failed:run.symbols_failed}});
         if (["completed", "completed_with_errors", "failed"].includes(run.status)) {
           window.clearInterval(timer);
           setActiveRun(null);

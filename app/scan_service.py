@@ -26,6 +26,24 @@ def _tail_refresh_count(settings: Settings, timeframe: str) -> int:
     return settings.tail_refresh_bars
 
 
+def _gap_refresh_count(settings: Settings, timeframe: str, cached: pd.DataFrame) -> int:
+    """Fetch enough recent bars to bridge a cache gap, with a small buffer."""
+    if cached.empty:
+        return settings.bars_per_timeframe
+    from app.market_data import _NYSE_CALENDAR
+    latest = pd.Timestamp(cached["timestamp_utc"].max()).tz_convert("America/New_York")
+    now = pd.Timestamp.now(tz="America/New_York")
+    if timeframe == "4hour":
+        sessions = len(_NYSE_CALENDAR.sessions_in_range(latest.normalize(), now.normalize()))
+        estimate = max(FOUR_HOUR_TAIL_REFRESH_BARS, sessions * 6 + 12)
+    elif timeframe == "daily":
+        sessions = len(_NYSE_CALENDAR.sessions_in_range(latest.normalize() + pd.Timedelta(days=1), now.normalize()))
+        estimate = sessions + max(settings.tail_refresh_bars, 3)
+    else:
+        estimate = max(0, (now.normalize() - latest.normalize()).days // 7) + max(settings.tail_refresh_bars, 3)
+    return min(settings.bars_per_timeframe, max(_tail_refresh_count(settings, timeframe), estimate))
+
+
 class ScanService:
     def __init__(self,settings:Settings,database:Database,provider:LongPortProvider,repository:ParquetBarRepository):
         self.settings=settings; self.database=database; self.provider=provider; self.repository=repository
@@ -54,7 +72,7 @@ class ScanService:
             cached = self.repository.read(symbol, tf)
             desired_session = "all" if tf == "4hour" else "intraday"
             session_mismatch = not cached.empty and str(cached.iloc[-1].get("trade_session", "all")) != desired_session
-            request_count = self.settings.bars_per_timeframe if cached.empty or session_mismatch else _tail_refresh_count(self.settings, tf)
+            request_count = self.settings.bars_per_timeframe if cached.empty or session_mismatch else _gap_refresh_count(self.settings, tf, cached)
             merged = self.repository.merge(symbol, tf, self.provider.fetch_bars(symbol, tf, request_count), replace_session=session_mismatch)
             self._save_manifest(symbol, tf, merged)
             updated[tf] = len(merged)
@@ -68,33 +86,59 @@ class ScanService:
             invalid=set(sync_timeframes)-set(TIMEFRAMES)
             if invalid:raise ValueError(f"Unsupported sync timeframes: {sorted(invalid)}")
             cfg={"initial_bars_per_timeframe":self.settings.bars_per_timeframe,"tail_refresh_bars":self.settings.tail_refresh_bars,"timeframes":list(TIMEFRAMES),"sync_timeframes":list(sync_timeframes),"adjustment_type":"forward","trade_session":"all","closed_bars_only":run_type=="official","auth_mode":self.settings.longport_auth_mode}; cfg_json=json.dumps(cfg,sort_keys=True); cfg_hash=hashlib.sha256(cfg_json.encode()).hexdigest()
-            with self.database.connect() as c:c.execute("INSERT INTO scan_runs (run_id,run_type,status,started_at,algorithm_version,config_version,config_json,config_hash,watchlist_json,symbols_total) VALUES (?,?,'running',?,?,?,?,?,?,?)",[run_id,run_type,datetime.now(timezone.utc),self.settings.algorithm_version,self.settings.config_version,cfg_json,cfg_hash,json.dumps(symbols),len(symbols)])
+            initial_phase = "syncing" if sync_timeframes else "scanning"
+            with self.database.connect() as c:c.execute("INSERT INTO scan_runs (run_id,run_type,status,started_at,algorithm_version,config_version,config_json,config_hash,watchlist_json,symbols_total,phase) VALUES (?,?,'running',?,?,?,?,?,?,?,?)",[run_id,run_type,datetime.now(timezone.utc),self.settings.algorithm_version,self.settings.config_version,cfg_json,cfg_hash,json.dumps(symbols),len(symbols),initial_phase])
             self._active_run_id=run_id; threading.Thread(target=self._execute,args=(run_id,run_type,symbols,sync_timeframes),daemon=True).start()
             return run_id,"running","行情同步与扫描已开始"
 
     def _execute(self,run_id:UUID,run_type:str,symbols:list[str],sync_timeframes:tuple[str,...]=TIMEFRAMES)->None:
-        succeeded=failed=0; errors=[]; cutoff=None; status="failed"
+        succeeded=failed=sync_succeeded=sync_failed=0; errors=[]; cutoff=None; status="failed"
         try:
             if sync_timeframes and self.settings.longport_auth_mode.lower() == "oauth":
                 self.provider.ensure_authenticated()
+            sync_errors: dict[str, str] = {}
+            if sync_timeframes:
+                for symbol in symbols:
+                    symbol_error = None
+                    for tf in sync_timeframes:
+                        try:
+                            cached = self.repository.read(symbol, tf)
+                            desired_session = "all" if tf == "4hour" else "intraday"
+                            session_mismatch = not cached.empty and str(cached.iloc[-1].get("trade_session", "all")) != desired_session
+                            if session_mismatch or cache_needs_sync(cached, tf):
+                                if cached.empty and not self.settings.auto_backfill_new_symbols:
+                                    raise ValueError(f"{tf} cache is empty and automatic backfill is disabled")
+                                count = self.settings.bars_per_timeframe if cached.empty or session_mismatch else _gap_refresh_count(self.settings, tf, cached)
+                                bars = self.provider.fetch_bars(symbol, tf, count)
+                                merged = self.repository.merge(symbol, tf, bars, replace_session=session_mismatch)
+                                self._save_manifest(symbol, tf, merged)
+                        except Exception as exc:
+                            symbol_error = f"{tf}: {exc}"
+                            errors.append({"symbol": symbol, "stage": "sync", "message": symbol_error})
+                            with self.database.connect() as c:
+                                c.execute("INSERT INTO scan_errors VALUES (?,?,?,?,?,?,?,current_timestamp)", [uuid4(), run_id, symbol, tf, "sync", "symbol_sync_failed", str(exc)[:2000]])
+                            break
+                    if symbol_error:
+                        sync_failed += 1
+                        sync_errors[symbol] = symbol_error
+                    else:
+                        sync_succeeded += 1
+                    with self.database.connect() as c:
+                        c.execute("UPDATE scan_runs SET sync_succeeded=?, sync_failed=? WHERE run_id=?", [sync_succeeded, sync_failed, run_id])
+            with self.database.connect() as c:
+                c.execute("UPDATE scan_runs SET phase='scanning' WHERE run_id=?", [run_id])
             for symbol in symbols:
                 try:
+                    if symbol in sync_errors:
+                        raise ValueError(f"Market data sync failed; scoring skipped: {sync_errors[symbol]}")
                     frames={}
                     for tf in TIMEFRAMES:
                         cached=self.repository.read(symbol,tf)
-                        desired_session="all" if tf=="4hour" else "intraday"
-                        session_mismatch=not cached.empty and str(cached.iloc[-1].get("trade_session","all"))!=desired_session
-                        if tf in sync_timeframes and (session_mismatch or cache_needs_sync(cached,tf)):
-                            if cached.empty and not self.settings.auto_backfill_new_symbols:
-                                raise ValueError(f"{tf} 没有本地 K 线，且自动补全已关闭")
-                            request_count = self.settings.bars_per_timeframe if cached.empty or session_mismatch else _tail_refresh_count(self.settings, tf)
-                            merged=self.repository.merge(symbol,tf,self.provider.fetch_bars(symbol,tf,request_count),replace_session=session_mismatch); self._save_manifest(symbol,tf,merged)
-                        else:
-                            merged=cached
-                        now=pd.Timestamp.now(tz="UTC"); merged=merged.copy()
+                        merged=cached.copy()
+                        now=pd.Timestamp.now(tz="UTC")
                         merged["is_closed"]=merged["timestamp_utc"].map(lambda value:_is_closed(value,tf,now))
                         usable=merged[merged.is_closed] if run_type=="official" else merged
-                        if usable.empty:raise ValueError(f"{tf} 没有可用 K 线")
+                        if usable.empty:raise ValueError(f"No usable {tf} bars")
                         frames[tf]=usable.set_index("timestamp_utc")[["open","high","low","close","volume"]].rename(columns=str.title)
                     result=scan_symbol(symbol,frames); self._save_result(run_id,result); succeeded+=1
                     latest=max(pd.Timestamp(v["bar_timestamp"]) for v in result["timeframes"].values()); cutoff=max(cutoff,latest) if cutoff else latest
@@ -103,9 +147,11 @@ class ScanService:
                 with self.database.connect() as c:
                     c.execute("UPDATE scan_runs SET symbols_succeeded=?, symbols_failed=? WHERE run_id=?",[succeeded,failed,run_id])
             status="completed" if failed==0 else "completed_with_errors"
-        except Exception as exc:errors.append({"message":str(exc)})
+        except Exception as exc:
+            errors.append({"message":str(exc)})
         finally:
-            with self.database.connect() as c:c.execute("UPDATE scan_runs SET status=?,completed_at=?,market_data_cutoff=?,symbols_succeeded=?,symbols_failed=?,error_summary=? WHERE run_id=?",[status,datetime.now(timezone.utc),cutoff,succeeded,failed,json.dumps(errors,ensure_ascii=False),run_id])
+            with self.database.connect() as c:
+                c.execute("UPDATE scan_runs SET status=?,phase='completed',completed_at=?,market_data_cutoff=?,symbols_succeeded=?,symbols_failed=?,sync_succeeded=?,sync_failed=?,error_summary=? WHERE run_id=?",[status,datetime.now(timezone.utc),cutoff,succeeded,failed,sync_succeeded,sync_failed,json.dumps(errors,ensure_ascii=False),run_id])
             with self._lock:self._active_run_id=None
 
     def _save_manifest(self,symbol,tf,bars):
@@ -149,6 +195,6 @@ class ScanService:
         with self.database.connect() as c:c.execute("INSERT INTO scan_errors VALUES (?,?,?,?,?,?,?,current_timestamp)",[uuid4(),run_id,symbol,None,"scan","symbol_failed",message[:2000]])
 
     def run_status(self,run_id:UUID):
-        with self.database.connect(read_only=True) as c:row=c.execute("SELECT status,symbols_total,symbols_succeeded,symbols_failed,started_at,completed_at,error_summary FROM scan_runs WHERE run_id=?",[run_id]).fetchone()
+        with self.database.connect(read_only=True) as c:row=c.execute("SELECT status,symbols_total,symbols_succeeded,symbols_failed,started_at,completed_at,error_summary,phase,sync_succeeded,sync_failed FROM scan_runs WHERE run_id=?",[run_id]).fetchone()
         if not row:return None
-        return {"run_id":str(run_id),"status":row[0],"symbols_total":row[1],"symbols_succeeded":row[2],"symbols_failed":row[3],"started_at":row[4],"completed_at":row[5],"errors":json.loads(row[6]) if row[6] else []}
+        return {"run_id":str(run_id),"status":row[0],"symbols_total":row[1],"symbols_succeeded":row[2],"symbols_failed":row[3],"started_at":row[4],"completed_at":row[5],"errors":json.loads(row[6]) if row[6] else [],"phase":row[7],"sync_succeeded":row[8],"sync_failed":row[9]}

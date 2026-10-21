@@ -4,7 +4,7 @@ import json
 import threading
 import time
 import traceback
-from datetime import time as dtime
+from datetime import timedelta
 
 import pandas as pd
 
@@ -74,10 +74,9 @@ def _dispatch_signals(
 
 
 class DailyPushScheduler:
-    """Runs a full official scan shortly after the 16:15 ET daily close and
-    pushes any newly confirmed daily-level buy signal to WeCom."""
+    """Syncs all bars, then runs the official scan 15 minutes after NYSE close."""
 
-    DISPATCH_TIME = dtime(16, 15)
+    POST_CLOSE_DELAY = timedelta(minutes=15)
 
     def __init__(self, settings: Settings, scan_service: ScanService, repository: ParquetBarRepository):
         self.settings = settings
@@ -88,7 +87,8 @@ class DailyPushScheduler:
 
     def start(self) -> None:
         now_ny = pd.Timestamp.now(tz="America/New_York")
-        if now_ny.time() >= self.DISPATCH_TIME:
+        today = now_ny.strftime("%Y-%m-%d")
+        if _NYSE_CALENDAR.is_session(today) and now_ny >= self._dispatch_at(today):
             # A service restart after the dispatch time must not immediately
             # launch a full-universe catch-up scan on a constrained VPS.
             self._skip_startup_date = now_ny.strftime("%Y-%m-%d")
@@ -122,6 +122,10 @@ class DailyPushScheduler:
     def _save_attempt_date(self, date_str: str) -> None:
         self._save_state(last_attempt_date=date_str)
 
+    def _dispatch_at(self, session_date: str) -> pd.Timestamp:
+        session = pd.Timestamp(session_date)
+        return (_NYSE_CALENDAR.session_close(session) + self.POST_CLOSE_DELAY).tz_convert("America/New_York")
+
     def _loop(self) -> None:
         while True:
             try:
@@ -135,7 +139,7 @@ class DailyPushScheduler:
         today = now_ny.strftime("%Y-%m-%d")
         if not _NYSE_CALENDAR.is_session(today):
             return
-        if now_ny.time() < self.DISPATCH_TIME:
+        if now_ny < self._dispatch_at(today):
             return
         if self._skip_startup_date == today:
             return

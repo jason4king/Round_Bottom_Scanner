@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS scan_runs (
     symbols_total INTEGER NOT NULL,
     symbols_succeeded INTEGER NOT NULL DEFAULT 0,
     symbols_failed INTEGER NOT NULL DEFAULT 0,
+    phase VARCHAR NOT NULL DEFAULT 'scanning',
+    sync_succeeded INTEGER NOT NULL DEFAULT 0,
+    sync_failed INTEGER NOT NULL DEFAULT 0,
     error_summary JSON
 );
 
@@ -123,6 +126,10 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
             connection.execute(SCHEMA_SQL)
+            # Existing local/VPS databases predate staged sync and scan progress.
+            connection.execute("ALTER TABLE scan_runs ADD COLUMN IF NOT EXISTS phase VARCHAR DEFAULT 'scanning'")
+            connection.execute("ALTER TABLE scan_runs ADD COLUMN IF NOT EXISTS sync_succeeded INTEGER DEFAULT 0")
+            connection.execute("ALTER TABLE scan_runs ADD COLUMN IF NOT EXISTS sync_failed INTEGER DEFAULT 0")
 
     def close(self) -> None:
         with self._lock:
