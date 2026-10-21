@@ -11,6 +11,7 @@ import exchange_calendars as xcals
 import webbrowser
 import os
 from threading import Lock
+from dateutil import tz
 
 
 TIMEFRAMES = ("weekly", "daily", "4hour")
@@ -123,7 +124,9 @@ class LongPortProvider:
                 # UTC-configured host it's correct, on a UTC+8 host every
                 # timestamp lands 8h ahead). Interpret it as local time and
                 # convert properly instead of assuming it's already UTC.
-                local_tzinfo = datetime.now().astimezone().tzinfo
+                # tzlocal retains historical DST transitions; the tzinfo from
+                # datetime.now().astimezone() can be a fixed current offset.
+                local_tzinfo = tz.tzlocal()
                 timestamp = timestamp.tz_localize(local_tzinfo).tz_convert("UTC")
             else:
                 timestamp=timestamp.tz_convert("UTC")

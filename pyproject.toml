@@ -20,6 +20,9 @@ dev = [
   "pytest>=8.3,<9",
 ]
 longport = ["longport>=4.3.7,<5"]
+research = [
+    "scikit-learn>=1.5,<2",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

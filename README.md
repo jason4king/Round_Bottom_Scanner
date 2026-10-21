@@ -46,7 +46,7 @@ curl -i http://127.0.0.1:8000/api/v1/health
 
 当前已经实现股票池读取、DuckDB schema、Parquet 增量缓存、LongPort 三周期真实行情读取、F1～F6 与跨周期评分、后台逐股扫描、任务进度查询、正式结果持久化和两栏 GUI。前端会轮询并显示扫描进度，完成后自动刷新评分。
 
-尚待实现的是各详情 Tab 的实际图表和诊断内容、SSE 推送、历史收益回测统计、定时调度及更完整的缓存管理操作。
+尚待实现的是各详情 Tab 的实际图表和诊断内容、SSE 推送、完整的组合级历史收益回测统计、定时调度及更完整的缓存管理操作。
 
 行情同步采用增量策略：证券/周期没有缓存时请求最近 1000 根；已有 Parquet 缓存时只请求最近 3 根，再按时间戳覆盖缓存尾部并去重。
 
@@ -57,3 +57,26 @@ Parquet 默认保留全部历史 K 线，不再按 1500 根裁剪。`CACHE_RETEN
 配置版本 `v2-weekly-close` 修正了周末扫描时错误排除当周已收盘周线的问题。升级后应重新执行一次正式扫描；旧批次保留用于审计，但不应与修正后的评分直接混用。
 
 K 线图通过 `/api/v1/symbols/{symbol}/bars` 读取本地 Parquet 缓存并加载到内存，附加 EMA 后返回。浏览图表不会额外调用 LongPort。
+
+## 离线预测研究（实验版）
+
+预测研究读取本地已收盘日线，不会更新行情缓存，也不会修改前台扫描分数或推送。安装可选依赖并运行：
+
+```powershell
+.venv\Scripts\python.exe -m pip install -e ".[research]"
+.venv\Scripts\python.exe run_prediction_research.py
+```
+
+报告、点时特征标签和滚动样本外预测默认写入 `reports/prediction_research/<UTC时间>/`。首版比较全特征 Ridge/逻辑回归、训练窗基准和 20/60 日动量基准；结果用于研究，不作为已验证的交易信号。
+
+## 扩展日线历史数据
+
+该脚本通过 LongPort 历史分页接口补足本地日线数据，默认将每只股票扩展到 1800 根。只有校验并合并完成后，才会写回对应的 Parquet 文件。
+
+LongPort 单次最多返回 1000 根 K 线，脚本会按页向前拉取。
+
+```powershell
+.venv\Scripts\python.exe sync_extended_daily_history.py --target-bars 1800
+```
+
+可使用 `--symbol AAPL.US` 限定单只股票；添加 `--dry-run` 可只拉取并校验数据，不写入 Parquet 文件。运行前需在本机配置 LongPort API 凭据。
