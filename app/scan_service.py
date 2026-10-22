@@ -33,14 +33,18 @@ def _gap_refresh_count(settings: Settings, timeframe: str, cached: pd.DataFrame)
     from app.market_data import _NYSE_CALENDAR
     latest = pd.Timestamp(cached["timestamp_utc"].max()).tz_convert("America/New_York")
     now = pd.Timestamp.now(tz="America/New_York")
+    # exchange_calendars expects date-only, timezone-naive bounds. Passing
+    # pytz-aware New York timestamps raises because it expects ZoneInfo.key.
+    latest_date = pd.Timestamp(latest.date())
+    now_date = pd.Timestamp(now.date())
     if timeframe == "4hour":
-        sessions = len(_NYSE_CALENDAR.sessions_in_range(latest.normalize(), now.normalize()))
+        sessions = len(_NYSE_CALENDAR.sessions_in_range(latest_date, now_date))
         estimate = max(FOUR_HOUR_TAIL_REFRESH_BARS, sessions * 6 + 12)
     elif timeframe == "daily":
-        sessions = len(_NYSE_CALENDAR.sessions_in_range(latest.normalize() + pd.Timedelta(days=1), now.normalize()))
+        sessions = len(_NYSE_CALENDAR.sessions_in_range(latest_date + pd.Timedelta(days=1), now_date))
         estimate = sessions + max(settings.tail_refresh_bars, 3)
     else:
-        estimate = max(0, (now.normalize() - latest.normalize()).days // 7) + max(settings.tail_refresh_bars, 3)
+        estimate = max(0, (now_date - latest_date).days // 7) + max(settings.tail_refresh_bars, 3)
     return min(settings.bars_per_timeframe, max(_tail_refresh_count(settings, timeframe), estimate))
 
 
