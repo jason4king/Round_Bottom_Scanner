@@ -223,25 +223,51 @@ def get_latest_scan():
 @app.get("/api/v1/results/latest", response_model=list[ScanResultItem])
 def get_latest_results() -> list[ScanResultItem]:
     with database.connect(read_only=True) as connection:
+        latest_run = connection.execute(
+            """SELECT run_id FROM scan_runs
+               WHERE run_type='official' AND status IN ('completed','completed_with_errors')
+               ORDER BY completed_at DESC LIMIT 1"""
+        ).fetchone()
+        if not latest_run:
+            return []
+        run_id = latest_run[0]
         rows = connection.execute(
-            """
-            SELECT r.symbol, r.total_score, r.triggered_factors_json, r.data_status, r.run_id
-            FROM scan_results r
-            JOIN scan_runs s ON s.run_id = r.run_id
-            WHERE s.run_type = 'official' AND s.status IN ('completed', 'completed_with_errors')
-              AND s.completed_at = (
-                SELECT max(completed_at) FROM scan_runs
-                WHERE run_type = 'official' AND status IN ('completed', 'completed_with_errors')
-              )
-            ORDER BY r.total_score DESC, r.symbol
-            """
+            """SELECT symbol,total_score,triggered_factors_json,data_status
+               FROM scan_results WHERE run_id=? ORDER BY total_score DESC,symbol""",
+            [run_id],
         ).fetchall()
-        patterns={};breakout_patterns={}
-        for row in rows:
-            pattern=connection.execute("SELECT timeframe,details_json FROM factor_results WHERE run_id=? AND symbol=? AND factor_id='F7' AND triggered ORDER BY CAST(json_extract(details_json,'$.confidence') AS DOUBLE) DESC LIMIT 1",[row[4],row[0]]).fetchone()
-            if pattern:patterns[row[0]]={**json.loads(pattern[1]),"timeframe":pattern[0]}
-            bases=connection.execute("SELECT f.timeframe,f.details_json FROM factor_results f JOIN factor_results arc ON arc.run_id=f.run_id AND arc.symbol=f.symbol AND arc.timeframe=f.timeframe AND arc.factor_id='F3' AND arc.triggered WHERE f.run_id=? AND f.symbol=? AND f.factor_id='F9' AND f.triggered ORDER BY CASE f.timeframe WHEN 'weekly' THEN 1 WHEN 'daily' THEN 2 ELSE 3 END",[row[4],row[0]]).fetchall()
-            breakout_patterns[row[0]]=[{"timeframe":item[0],**json.loads(item[1])} for item in bases]
+        factor_rows = connection.execute(
+            """SELECT symbol,timeframe,factor_id,details_json FROM factor_results
+               WHERE run_id=? AND triggered AND factor_id IN ('F3','F7','F9')""",
+            [run_id],
+        ).fetchall()
+
+    # Fetch factors in one batch. Per-symbol queries here made this endpoint
+    # scan the full factor table over a thousand times for a 573-symbol run.
+    patterns: dict[str, dict] = {}
+    f3_timeframes: set[tuple[str, str]] = set()
+    for symbol, timeframe, factor_id, details_json in factor_rows:
+        details = json.loads(details_json)
+        if factor_id == "F3":
+            f3_timeframes.add((symbol, timeframe))
+        elif factor_id == "F7":
+            current = patterns.get(symbol)
+            confidence = float(details.get("confidence") or 0)
+            if current is None or confidence > float(current.get("confidence") or 0):
+                patterns[symbol] = {**details, "timeframe": timeframe}
+    # F3 rows can appear after F9 rows, so apply their matching filter after
+    # building the complete set of triggered F3 timeframes.
+    f9_rows = [
+        (symbol, timeframe, json.loads(details_json))
+        for symbol, timeframe, factor_id, details_json in factor_rows
+        if factor_id == "F9" and (symbol, timeframe) in f3_timeframes
+    ]
+    breakout_patterns: dict[str, list[dict]] = {}
+    timeframe_order = {"weekly": 1, "daily": 2, "4hour": 3}
+    for symbol, timeframe, details in f9_rows:
+        breakout_patterns.setdefault(symbol, []).append({"timeframe": timeframe, **details})
+    for items in breakout_patterns.values():
+        items.sort(key=lambda item: timeframe_order.get(item["timeframe"], 99))
     return [
         ScanResultItem(
             symbol=row[0],
