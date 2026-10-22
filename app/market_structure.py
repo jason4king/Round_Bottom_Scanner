@@ -290,24 +290,38 @@ def _append_best_block(blocks: list[dict[str, Any]], candidate: dict[str, Any]) 
 
 def bullish_order_block_features(frame: pd.DataFrame, radius: int = 5) -> pd.DataFrame:
     """Return causal per-bar bullish order-block features for shadow evaluation."""
-    result = pd.DataFrame(index=frame.index)
-    result["distance_pct"] = np.nan
-    result["quality_score"] = np.nan
-    result["formation_score"] = np.nan
-    result["retest_score"] = np.nan
-    result["touch_count"] = 0
-    result["age_bars"] = 0
-    result["retest_confirmed"] = False
-    result["pierced"] = False
-    result["status"] = None
+    row_count = len(frame)
+    distances = np.full(row_count, np.nan)
+    quality_scores = np.full(row_count, np.nan)
+    formation_scores = np.full(row_count, np.nan)
+    retest_scores = np.full(row_count, np.nan)
+    touch_counts = np.zeros(row_count, dtype=np.int64)
+    ages = np.zeros(row_count, dtype=np.int64)
+    retest_confirmed = np.zeros(row_count, dtype=bool)
+    pierced_values = np.zeros(row_count, dtype=bool)
+    statuses = np.full(row_count, None, dtype=object)
+
+    def result_frame() -> pd.DataFrame:
+        return pd.DataFrame({
+            "distance_pct": distances,
+            "quality_score": quality_scores,
+            "formation_score": formation_scores,
+            "retest_score": retest_scores,
+            "touch_count": touch_counts,
+            "age_bars": ages,
+            "retest_confirmed": retest_confirmed,
+            "pierced": pierced_values,
+            "status": statuses,
+        }, index=frame.index)
+
     if len(frame) < radius * 2 + 3:
-        return result
+        return result_frame()
     high_col = "High" if "High" in frame else "high" if "high" in frame else None
     low_col = "Low" if "Low" in frame else "low" if "low" in frame else None
     open_col = "Open" if "Open" in frame else "open" if "open" in frame else None
     close_col = "Close" if "Close" in frame else "close" if "close" in frame else None
     if high_col is None or low_col is None or open_col is None or close_col is None:
-        return result
+        return result_frame()
     highs = frame[high_col].to_numpy(float); lows = frame[low_col].to_numpy(float)
     opens = frame[open_col].to_numpy(float); closes = frame[close_col].to_numpy(float)
     previous_close = np.r_[np.nan, closes[:-1]]
@@ -345,9 +359,15 @@ def bullish_order_block_features(frame: pd.DataFrame, radius: int = 5) -> pd.Dat
         active = [block for block in blocks if block["active"] and block["bias"] == "bullish"]
         if active:
             selected = min(active, key=lambda block: max((lows[bar] / block["top"] - 1) * 100, 0.0))
-            result.iat[bar, result.columns.get_loc("distance_pct")] = max((lows[bar] / selected["top"] - 1) * 100, 0.0)
-            for column in ("quality_score", "formation_score", "retest_score", "touch_count", "age_bars", "retest_confirmed", "pierced", "status"):
-                result.iat[bar, result.columns.get_loc(column)] = selected[column]
+            distances[bar] = max((lows[bar] / selected["top"] - 1) * 100, 0.0)
+            quality_scores[bar] = selected["quality_score"]
+            formation_scores[bar] = selected["formation_score"]
+            retest_scores[bar] = selected["retest_score"]
+            touch_counts[bar] = selected["touch_count"]
+            ages[bar] = selected["age_bars"]
+            retest_confirmed[bar] = selected["retest_confirmed"]
+            pierced_values[bar] = selected["pierced"]
+            statuses[bar] = selected["status"]
         if latest_high is not None and not crossed_high and closes[bar] > highs[latest_high] and bar > latest_high:
             crossed_high = True
             source = latest_high + int(np.nanargmin(lows[latest_high:bar]))
@@ -355,7 +375,7 @@ def bullish_order_block_features(frame: pd.DataFrame, radius: int = 5) -> pd.Dat
             _append_best_block(blocks, candidate)
         if latest_low is not None and not crossed_low and closes[bar] < lows[latest_low]:
             crossed_low = True
-    return result
+    return result_frame()
 
 
 def bullish_order_block_distance(frame: pd.DataFrame, radius: int = 5) -> pd.Series:

@@ -357,11 +357,11 @@ def get_symbol_bars(
         elliott_wave = analyze_elliott_impulse(chart)
         full_chart = chart
         chart_cache.set(cache_key, (full_chart, base_breakout, market_structure, elliott_wave))
-    # is_closed depends on wall-clock time, not just the cached bar content,
-    # so it's always recomputed fresh regardless of a cache hit.
-    full_chart = full_chart.copy()
-    full_chart["is_closed"] = full_chart.index.to_series().map(lambda ts: _is_closed(ts, timeframe, now))
-    chart = full_chart.tail(limit)
+    # is_closed depends on wall-clock time, not just the cached bar content.
+    # Refresh it only for the displayed window instead of copying and mapping
+    # every warm-up row on every chart request.
+    chart = full_chart.tail(limit).copy()
+    chart["is_closed"] = chart.index.to_series().map(lambda ts: _is_closed(ts, timeframe, now))
     payload = []
     for timestamp, row in chart.iterrows():
         from_index=int(row["MACD_XD_DIVERGENCE_FROM_INDEX"]);to_index=int(row["MACD_XD_DIVERGENCE_TO_INDEX"])

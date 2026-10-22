@@ -126,22 +126,28 @@ def _macd_xd(bars: pd.DataFrame) -> pd.DataFrame:
 def _wilder_rsi(close: pd.Series, period: int) -> pd.Series:
     """TradingView-compatible RSI using Wilder's smoothed averages."""
     values = close.astype(float)
-    change = values.diff()
-    gains = change.clip(lower=0)
-    losses = -change.clip(upper=0)
-    average_gain = pd.Series(np.nan, index=values.index, dtype=float)
-    average_loss = pd.Series(np.nan, index=values.index, dtype=float)
-    if len(values) <= period:
-        return average_gain
-    average_gain.iloc[period] = gains.iloc[1 : period + 1].mean()
-    average_loss.iloc[period] = losses.iloc[1 : period + 1].mean()
-    for index in range(period + 1, len(values)):
-        average_gain.iloc[index] = (average_gain.iloc[index - 1] * (period - 1) + gains.iloc[index]) / period
-        average_loss.iloc[index] = (average_loss.iloc[index - 1] * (period - 1) + losses.iloc[index]) / period
-    ratio = average_gain / average_loss
-    rsi = 100 - 100 / (1 + ratio)
-    rsi = rsi.mask((average_loss == 0) & (average_gain > 0), 100.0)
-    return rsi.mask((average_gain == 0) & (average_loss > 0), 0.0)
+    prices = values.to_numpy()
+    rsi_values = np.full(len(prices), np.nan, dtype=float)
+    if len(prices) <= period:
+        return pd.Series(rsi_values, index=values.index, dtype=float)
+
+    changes = np.diff(prices)
+    gains = np.maximum(changes, 0.0)
+    losses = np.maximum(-changes, 0.0)
+    average_gain = float(np.nanmean(gains[:period]))
+    average_loss = float(np.nanmean(losses[:period]))
+    for index in range(period, len(prices)):
+        if index > period:
+            average_gain = (average_gain * (period - 1) + gains[index - 1]) / period
+            average_loss = (average_loss * (period - 1) + losses[index - 1]) / period
+        if average_loss == 0 and average_gain > 0:
+            rsi_values[index] = 100.0
+        elif average_gain == 0 and average_loss > 0:
+            rsi_values[index] = 0.0
+        elif average_loss > 0:
+            ratio = average_gain / average_loss
+            rsi_values[index] = 100 - 100 / (1 + ratio)
+    return pd.Series(rsi_values, index=values.index, dtype=float)
 
 
 def _rsi_bottom_structure(bars: pd.DataFrame, pivot_radius: int = 3) -> pd.DataFrame:
