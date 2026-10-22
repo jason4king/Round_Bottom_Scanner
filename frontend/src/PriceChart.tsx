@@ -136,9 +136,6 @@ export default function PriceChart({ symbol, onBarsChange }: { symbol: string; o
     trendResistance.setData(points.filter((p)=>p.trend_resistance!==null).map((p)=>({time:p.time,value:p.trend_resistance!})));
     rsiNeckline.setData(points.filter((p)=>p.rsi_neckline!==null).map((p)=>({time:p.time,value:p.rsi_neckline!})));
     rsiStop.setData(points.filter((p)=>p.rsi_stop_level!==null).map((p)=>({time:p.time,value:p.rsi_stop_level!})));
-    if(payload.base_breakout){
-      candles.createPriceLine({price:payload.base_breakout.pivot_price,color:payload.base_breakout.buy_candidate?"#62e0c1":"#f2b94b",lineWidth:2,lineStyle:2,axisLabelVisible:true,title:t("basePivot")});
-    }
     const buyLookback:Record<Timeframe,number>={weekly:52,daily:100,"4hour":120};
     const buyStart=Math.max(0,points.length-buyLookback[timeframe]);
     const nearDisplayedBullishBlock=(low:number,time:UTCTimestamp,maxDistance=.02)=>payload.market_structure.order_blocks.some((block)=>{
@@ -236,14 +233,6 @@ export default function PriceChart({ symbol, onBarsChange }: { symbol: string; o
       shape:"arrowUp" as const,
       text:t(trendStartTimes.has(Number(p.time))?"trendStartBuy":trendPullbackTimes.has(Number(p.time))?"trendPullbackBuy":p.rsi_v_bottom_buy?"rsiVBottomBuy":"rsiBreakoutBuy"),
     }));
-    if(payload.base_breakout){
-      const signal=payload.base_breakout;
-      priceMarkers.push({
-        time:Math.floor(new Date(signal.timestamp).getTime()/1000) as UTCTimestamp,
-        position:"belowBar",color:signal.buy_candidate?"#ff5b61":"#f2b94b",shape:signal.buy_candidate?"arrowUp":"circle",
-        text:`${t(`baseType.${signal.base_type}`)} · ${t(signal.buy_candidate?"baseBuy":"baseWatch")}`,
-      });
-    }
     createSeriesMarkers(candles,priceMarkers);
     const rsi = rsiInstance.addSeries(LineSeries, { color:"#9b7de3", lineWidth:2, priceLineVisible:false, lastValueVisible:true });
     const rsiSignal = rsiInstance.addSeries(LineSeries, { color:"#d6ad42", lineWidth:1, priceLineVisible:false, lastValueVisible:true });

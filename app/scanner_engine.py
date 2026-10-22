@@ -527,29 +527,7 @@ def detect_f8(b: pd.DataFrame) -> FactorResult:
     return _result("F8", "RSI W-Bottom", b, True, details)
 
 
-def detect_f9(b: pd.DataFrame) -> FactorResult:
-    """Observe CAN SLIM-style cup/handle and flat-base pivots."""
-    if len(b)<35:return _result("F9","Base Breakout",b,False,{"reason":"insufficient_history","required":35,"actual":len(b),"scored":False})
-    candidates=[]; current=float(b.Close.iloc[-1]); prior_volume=float(b.Volume.iloc[-21:-1].mean()); volume_ratio=float(b.Volume.iloc[-1])/prior_volume if prior_volume else 0.0
-    cup=detect_f7(b)
-    if cup.triggered:
-        candidates.append({"base_type":"cup_handle","stage":cup.details["stage"],"pivot_price":float(cup.details["breakout_level"]),"confidence":float(cup.details["confidence"]),"source_factor":"F7"})
-    for length in (15,20,25,30,35):
-        if len(b)<length+1:continue
-        base=b.iloc[-length-1:-1];top=float(base.High.max());bottom=float(base.Low.min());range_pct=top/bottom-1 if bottom else np.inf
-        x=np.arange(length,dtype=float);low_slope=float(np.polyfit(x,base.Low.to_numpy(float),1)[0]/bottom) if bottom else -np.inf
-        if range_pct<=.12 and low_slope>=-.0015:
-            stage="breakout_confirmed" if current>=top*1.005 and volume_ratio>=1.5 else "breakout_ready" if current>=top*.97 else "base_forming"
-            confidence=min(100,55+max(0,1-range_pct/.12)*25+min(volume_ratio/1.5,1)*20)
-            candidates.append({"base_type":"flat_base","stage":stage,"pivot_price":top,"confidence":confidence,"base_length":length,"range_pct":range_pct*100,"low_slope_pct_per_bar":low_slope*100})
-    if not candidates:return _result("F9","Base Breakout",b,False,{"reason":"base_requirements_not_met","scored":False})
-    rank={"base_forming":1,"cup_complete":1,"handle_forming":2,"breakout_ready":3,"breakout_confirmed":4}
-    selected=max(candidates,key=lambda c:(rank.get(c["stage"],0),c["confidence"]))
-    selected={**selected,"current_price":current,"distance_to_pivot_pct":(current/selected["pivot_price"]-1)*100,"breakout_volume_ratio":volume_ratio,"buy_candidate":selected["stage"]=="breakout_confirmed","scored":False,"candidate_count":len(candidates)}
-    return _result("F9","Base Breakout",b,True,selected)
-
-
-DETECTORS=(detect_f1,detect_f2,detect_f3,detect_f4,detect_f5,detect_f6,detect_f7,detect_f8,detect_f9)
+DETECTORS=(detect_f1,detect_f2,detect_f3,detect_f4,detect_f5,detect_f6,detect_f7,detect_f8)
 
 
 def scan_symbol(symbol: str, timeframe_bars: dict[str,pd.DataFrame]) -> dict[str,Any]:

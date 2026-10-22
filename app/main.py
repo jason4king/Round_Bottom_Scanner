@@ -30,7 +30,7 @@ from app.schemas import (
 )
 from app.watchlist import load_watchlist, save_watchlist
 from app.watchlist import normalize_symbol
-from app.scanner_engine import add_indicators, detect_f3, detect_f9
+from app.scanner_engine import add_indicators
 from app.market_structure import calculate_market_structure
 from app.elliott_wave import analyze_elliott_impulse
 from trendline_indicator import add_trendline_channels
@@ -237,38 +237,20 @@ def get_latest_results() -> list[ScanResultItem]:
             [run_id],
         ).fetchall()
         factor_rows = connection.execute(
-            """SELECT symbol,timeframe,factor_id,details_json FROM factor_results
-               WHERE run_id=? AND triggered AND factor_id IN ('F3','F7','F9')""",
+            """SELECT symbol,timeframe,details_json FROM factor_results
+               WHERE run_id=? AND triggered AND factor_id='F7'""",
             [run_id],
         ).fetchall()
 
     # Fetch factors in one batch. Per-symbol queries here made this endpoint
     # scan the full factor table over a thousand times for a 573-symbol run.
     patterns: dict[str, dict] = {}
-    f3_timeframes: set[tuple[str, str]] = set()
-    for symbol, timeframe, factor_id, details_json in factor_rows:
+    for symbol, timeframe, details_json in factor_rows:
         details = json.loads(details_json)
-        if factor_id == "F3":
-            f3_timeframes.add((symbol, timeframe))
-        elif factor_id == "F7":
-            current = patterns.get(symbol)
-            confidence = float(details.get("confidence") or 0)
-            if current is None or confidence > float(current.get("confidence") or 0):
-                patterns[symbol] = {**details, "timeframe": timeframe}
-    # F3 rows can appear after F9 rows, so apply their matching filter after
-    # building the complete set of triggered F3 timeframes.
-    f9_rows = [
-        (symbol, timeframe, json.loads(details_json))
-        for symbol, timeframe, factor_id, details_json in factor_rows
-        if factor_id == "F9" and (symbol, timeframe) in f3_timeframes
-        and json.loads(details_json).get("base_type") != "double_bottom"
-    ]
-    breakout_patterns: dict[str, list[dict]] = {}
-    timeframe_order = {"weekly": 1, "daily": 2, "4hour": 3}
-    for symbol, timeframe, details in f9_rows:
-        breakout_patterns.setdefault(symbol, []).append({"timeframe": timeframe, **details})
-    for items in breakout_patterns.values():
-        items.sort(key=lambda item: timeframe_order.get(item["timeframe"], 99))
+        current = patterns.get(symbol)
+        confidence = float(details.get("confidence") or 0)
+        if current is None or confidence > float(current.get("confidence") or 0):
+            patterns[symbol] = {**details, "timeframe": timeframe}
     return [
         ScanResultItem(
             symbol=row[0],
@@ -276,7 +258,6 @@ def get_latest_results() -> list[ScanResultItem]:
             triggered_factors=json.loads(row[2]),
             data_status=row[3],
             f7_pattern=patterns.get(row[0]),
-            breakout_patterns=breakout_patterns.get(row[0],[]),
         )
         for row in rows
     ]
@@ -331,33 +312,22 @@ def get_symbol_bars(
     compute_bars = bars.tail(compute_window)
 
     cache_key = (
-        normalized_symbol, timeframe, len(compute_bars),
+        "chart_without_f9", normalized_symbol, timeframe, len(compute_bars),
         compute_bars["timestamp_utc"].iloc[0], compute_bars["timestamp_utc"].iloc[-1],
         pd.Timestamp(compute_bars["updated_at"].max()),
     )
     cached = chart_cache.get(cache_key)
     if cached is not None:
-        full_chart, base_breakout, market_structure, elliott_wave = cached
+        full_chart, market_structure, elliott_wave = cached
     else:
         chart = compute_bars.set_index("timestamp_utc")
         chart = add_indicators(chart.rename(columns={"close": "Close"}))
-        detection_chart = chart.rename(columns={"open":"Open","high":"High","low":"Low","volume":"Volume"})
-        arc = detect_f3(detection_chart)
-        base = detect_f9(detection_chart)
-        base_breakout = None
-        if arc.triggered and base.triggered:
-            base_breakout = {
-                **base.details,
-                "timestamp": chart.index[-1].isoformat(),
-                "arc_source": arc.details.get("source"),
-                "arc_stage": arc.details.get("stage"),
-            }
         chart = add_trendline_channels(chart, lookback=240, peak_distance=5)
         structure_radius = {"weekly": 15, "daily": 20, "4hour": 12}[timeframe]
         market_structure = calculate_market_structure(chart, pivot_radius=structure_radius)
         elliott_wave = analyze_elliott_impulse(chart)
         full_chart = chart
-        chart_cache.set(cache_key, (full_chart, base_breakout, market_structure, elliott_wave))
+        chart_cache.set(cache_key, (full_chart, market_structure, elliott_wave))
     # is_closed depends on wall-clock time, not just the cached bar content.
     # Refresh it only for the displayed window instead of copying and mapping
     # every warm-up row on every chart request.
@@ -416,7 +386,7 @@ def get_symbol_bars(
         "count": len(payload),
         "market_structure": market_structure,
         "elliott_wave": elliott_wave,
-        "base_breakout": base_breakout,
+        "base_breakout": None,
         "bars": payload,
     }
 
@@ -438,7 +408,7 @@ def get_symbol_diagnostics(symbol: str):
         run=_latest_official_run(c,normalized)
         if not run:raise HTTPException(status_code=404,detail="尚无该证券的正式扫描结果")
         summary=c.execute("SELECT total_score,base_total,confluence_total,pre_multiplier_score,coverage_multiplier,weekly_score,daily_score,four_hour_score,triggered_factors_json,weekly_bar_timestamp,daily_bar_timestamp,four_hour_bar_timestamp FROM scan_results WHERE run_id=? AND symbol=?",[run[0],normalized]).fetchone()
-        factors=c.execute("SELECT timeframe,factor_id,triggered,signal_name,factor_tier,base_score,timeframe_multiplier,score_contribution,bar_timestamp,reason,details_json FROM factor_results WHERE run_id=? AND symbol=? ORDER BY CASE timeframe WHEN 'weekly' THEN 1 WHEN 'daily' THEN 2 ELSE 3 END,factor_id",[run[0],normalized]).fetchall()
+        factors=c.execute("SELECT timeframe,factor_id,triggered,signal_name,factor_tier,base_score,timeframe_multiplier,score_contribution,bar_timestamp,reason,details_json FROM factor_results WHERE run_id=? AND symbol=? AND factor_id!='F9' ORDER BY CASE timeframe WHEN 'weekly' THEN 1 WHEN 'daily' THEN 2 ELSE 3 END,factor_id",[run[0],normalized]).fetchall()
     return json_safe({"run_id":str(run[0]),"completed_at":run[1],"algorithm_version":run[2],"config_version":run[3],"symbol":normalized,"scoring":{"total_score":summary[0],"base_total":summary[1],"confluence_total":summary[2],"pre_multiplier_score":summary[3],"coverage_multiplier":summary[4],"timeframe_scores":{"weekly":summary[5],"daily":summary[6],"4hour":summary[7]},"triggered_factors":json.loads(summary[8])},"bar_timestamps":{"weekly":summary[9],"daily":summary[10],"4hour":summary[11]},"factors":[{"timeframe":r[0],"factor_id":r[1],"triggered":r[2],"signal_name":r[3],"tier":r[4],"base_score":r[5],"multiplier":r[6],"contribution":r[7],"bar_timestamp":r[8],"reason":r[9],"details":json.loads(r[10])} for r in factors]})
 
 

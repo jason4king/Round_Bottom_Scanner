@@ -14,7 +14,7 @@ type Tab = (typeof tabs)[number];
 
 type StockRow = ScanResult & { hasResult: boolean };
 type UiMessage={key:string;values?:Record<string,number|string>}|{raw:string};
-type ResultView="scores"|"roundBottom"|"cupHandle"|"pushedBuy";
+type ResultView="scores"|"cupHandle"|"pushedBuy";
 type SortOrder="scoreDesc"|"scoreAsc"|"symbolAsc"|"symbolDesc"|"pushedAtDesc";
 
 function savedSortOrder():SortOrder{
@@ -106,7 +106,6 @@ export default function App() {
         return row.symbol.includes(search)||[names?.name_cn,names?.name_hk,names?.name_en].some(name=>name?.toLocaleUpperCase().includes(search));
       })
       .filter((row)=>resultView==="pushedBuy"||!favoriteOnly||favorites.includes(row.symbol))
-      .filter((row)=>resultView!=="roundBottom"||row.hasResult&&row.breakout_patterns.some(pattern=>pattern.buy_candidate))
       .filter((row)=>resultView!=="cupHandle"||row.hasResult&&Boolean(row.f7_pattern))
       .filter((row)=>resultView!=="pushedBuy"||buySignals.some(signal=>signal.symbol===row.symbol))
       .sort((a,b)=>{
@@ -232,7 +231,6 @@ export default function App() {
             </label>
           </div>
           <div className="filters">
-            <button aria-pressed={resultView==="roundBottom"} className={`quiet-button ${resultView==="roundBottom"?"active round-bottom-active":""}`} onClick={()=>setResultView("roundBottom")}>{t("roundBottom")}</button>
             <button aria-pressed={resultView==="cupHandle"} className={`quiet-button ${resultView==="cupHandle"?"active":""}`} onClick={()=>setResultView("cupHandle")}>{t("cupHandle")}</button>
             <button aria-pressed={resultView==="scores"} className={`quiet-button ${resultView==="scores"?"active":""}`} onClick={()=>setResultView("scores")}>{t("multiPeriod")}</button>
           </div>
@@ -255,7 +253,6 @@ export default function App() {
                 <span className="stock-score">{row.hasResult ? row.total_score.toFixed(0) : "—"}</span>
                 <span className={`data-state ${row.data_status === "正常" ? "good" : ""}`}>{row.data_status === "正常"?t("normal"):row.data_status === "等待扫描"?t("waitingScan"):row.data_status}</span>
                 {row.f7_pattern&&<span className={`f7-badge ${row.f7_pattern.stage}`}><b>F7</b><span>{t(`f7.${row.f7_pattern.stage}`)}</span><em>{t(row.f7_pattern.timeframe==="4hour"?"fourHour":row.f7_pattern.timeframe)} · {row.f7_pattern.confidence.toFixed(0)}%</em></span>}
-                {row.breakout_patterns.slice(0,1).map(pattern=><span className={`breakout-badge ${pattern.stage}`} key={`${pattern.timeframe}-${pattern.base_type}`}><b>{pattern.buy_candidate?"买点":"观察"}</b><span>{{cup_handle:"杯柄",flat_base:"平底"}[pattern.base_type]}</span><em>{t(pattern.timeframe==="4hour"?"fourHour":pattern.timeframe)} · 枢轴 {pattern.pivot_price.toFixed(2)}</em></span>)}
               </div>
             ))}
           </div>
