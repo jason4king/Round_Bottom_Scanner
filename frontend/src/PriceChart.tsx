@@ -138,9 +138,7 @@ export default function PriceChart({ symbol, onBarsChange }: { symbol: string; o
     rsiStop.setData(points.filter((p)=>p.rsi_stop_level!==null).map((p)=>({time:p.time,value:p.rsi_stop_level!})));
     const buyLookback:Record<Timeframe,number>={weekly:52,daily:100,"4hour":120};
     const buyStart=Math.max(0,points.length-buyLookback[timeframe]);
-    const swingRadius:Record<Timeframe,number>={weekly:3,daily:5,"4hour":5};
-    const pivotRadius=swingRadius[timeframe];
-    const breakoutSearchStart=pivotRadius;
+    const breakoutSearchStart=0;
     let positiveMacdCycle=-1,previousMacdPositive=false;
     const positiveMacdCycleByIndex=points.map((point)=>{
       const positive=point.macd_hist>0;
@@ -148,26 +146,22 @@ export default function PriceChart({ symbol, onBarsChange }: { symbol: string; o
       previousMacdPositive=positive;
       return positive?positiveMacdCycle:null;
     });
-    const swingHighByMacdCycle=new Map<number,{index:number;price:number;confirmedAt:number}>();
-    for(let barIndex=breakoutSearchStart;barIndex<points.length;barIndex++){
-      const confirmedPivot=barIndex-pivotRadius;
-      if(confirmedPivot>=pivotRadius&&points[barIndex].is_closed){
-        const pivotHigh=points[confirmedPivot].high;
-        const macdCycle=positiveMacdCycleByIndex[confirmedPivot];
-        let isSwingHigh=true;
-        for(let neighbor=confirmedPivot-pivotRadius;neighbor<=confirmedPivot+pivotRadius;neighbor++){
-          if(neighbor!==confirmedPivot&&points[neighbor].high>=pivotHigh){isSwingHigh=false;break;}
-        }
-        if(isSwingHigh&&macdCycle!==null){
-          const cycleHigh=swingHighByMacdCycle.get(macdCycle);
-          if(!cycleHigh||pivotHigh>cycleHigh.price){
-            swingHighByMacdCycle.set(macdCycle,{index:confirmedPivot,price:pivotHigh,confirmedAt:barIndex});
-          }
-        }
+    const highByMacdCycle=new Map<number,{index:number;price:number;lastPositiveIndex:number}>();
+    points.forEach((point,index)=>{
+      const macdCycle=positiveMacdCycleByIndex[index];
+      if(macdCycle===null)return;
+      const cycleHigh=highByMacdCycle.get(macdCycle);
+      if(!cycleHigh||point.high>cycleHigh.price){
+        highByMacdCycle.set(macdCycle,{index,price:point.high,lastPositiveIndex:index});
+      }else{
+        cycleHigh.lastPositiveIndex=index;
       }
-    }
+    });
     const highsConfirmedAt=new Map<number,{index:number;price:number}>();
-    for(const high of swingHighByMacdCycle.values())highsConfirmedAt.set(high.confirmedAt,{index:high.index,price:high.price});
+    for(const high of highByMacdCycle.values()){
+      const confirmedAt=high.lastPositiveIndex+1;
+      if(confirmedAt<points.length)highsConfirmedAt.set(confirmedAt,{index:high.index,price:high.price});
+    }
     let activeSwingHigh:{index:number;price:number}|null=null;
     const priorHighBreakouts:{pivotIndex:number;breakIndex:number;price:number}[]=[];
     for(let barIndex=breakoutSearchStart;barIndex<points.length;barIndex++){

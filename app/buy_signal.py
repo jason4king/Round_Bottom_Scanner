@@ -71,9 +71,9 @@ def _build_points(chart: pd.DataFrame, tail_window: int) -> list[dict[str, Any]]
     return points
 
 
-def _latest_daily_prior_high_breakout(points: list[dict[str, Any]], buy_start: int, radius: int = 5) -> float | None:
-    """Return the breakout of the highest confirmed swing high per positive-MACD cycle."""
-    if len(points) < 2 * radius + 2 or len(points) - 1 < buy_start:
+def _latest_daily_prior_high_breakout(points: list[dict[str, Any]], buy_start: int) -> float | None:
+    """Return the breakout of the highest high in the latest completed positive-MACD run."""
+    if len(points) < 2 or len(points) - 1 < buy_start:
         return None
     positive_cycle = -1
     previous_positive = False
@@ -85,31 +85,27 @@ def _latest_daily_prior_high_breakout(points: list[dict[str, Any]], buy_start: i
         previous_positive = positive
         cycle_by_index.append(positive_cycle if positive else None)
 
-    search_start = radius
-    swing_high_by_cycle: dict[int, dict[str, Any]] = {}
-    for bar_index in range(search_start, len(points)):
-        confirmed_pivot = bar_index - radius
-        if confirmed_pivot >= radius:
-            pivot_high = points[confirmed_pivot]["high"]
-            macd_cycle = cycle_by_index[confirmed_pivot]
-            is_swing_high = all(
-                neighbor == confirmed_pivot or points[neighbor]["high"] < pivot_high
-                for neighbor in range(confirmed_pivot - radius, confirmed_pivot + radius + 1)
-            )
-            if is_swing_high and macd_cycle is not None:
-                cycle_high = swing_high_by_cycle.get(macd_cycle)
-                if cycle_high is None or pivot_high > cycle_high["price"]:
-                    swing_high_by_cycle[macd_cycle] = {
-                        "price": pivot_high,
-                        "confirmed_at": bar_index,
-                    }
-
+    high_by_cycle: dict[int, dict[str, Any]] = {}
+    for index, point in enumerate(points):
+        macd_cycle = cycle_by_index[index]
+        if macd_cycle is None:
+            continue
+        cycle_high = high_by_cycle.get(macd_cycle)
+        if cycle_high is None or point["high"] > cycle_high["price"]:
+            high_by_cycle[macd_cycle] = {
+                "price": point["high"],
+                "index": index,
+                "last_positive_index": index,
+            }
+        else:
+            cycle_high["last_positive_index"] = index
     highs_confirmed_at = {
-        value["confirmed_at"]: value["price"]
-        for value in swing_high_by_cycle.values()
+        value["last_positive_index"] + 1: value["price"]
+        for value in high_by_cycle.values()
+        if value["last_positive_index"] + 1 < len(points)
     }
     active_high: float | None = None
-    for bar_index in range(search_start, len(points)):
+    for bar_index in range(1, len(points)):
         if bar_index in highs_confirmed_at:
             active_high = highs_confirmed_at[bar_index]
         previous, current = points[bar_index - 1], points[bar_index]
