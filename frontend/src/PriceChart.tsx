@@ -140,18 +140,29 @@ export default function PriceChart({ symbol, onBarsChange }: { symbol: string; o
     const buyStart=Math.max(0,points.length-buyLookback[timeframe]);
     const swingRadius:Record<Timeframe,number>={weekly:3,daily:5,"4hour":5};
     const pivotRadius=swingRadius[timeframe];
-    const breakoutSearchStart=Math.max(pivotRadius, buyStart-pivotRadius*2);
+    const breakoutSearchStart=pivotRadius;
+    let positiveMacdCycle=-1,previousMacdPositive=false;
+    const positiveMacdCycleByIndex=points.map((point)=>{
+      const positive=point.macd_hist>0;
+      if(positive&&!previousMacdPositive)positiveMacdCycle+=1;
+      previousMacdPositive=positive;
+      return positive?positiveMacdCycle:null;
+    });
+    const cyclesWithHigh=new Set<number>();
     let activeSwingHigh:{index:number;price:number}|null=null;
     const priorHighBreakouts:{pivotIndex:number;breakIndex:number;price:number}[]=[];
     for(let barIndex=breakoutSearchStart;barIndex<points.length;barIndex++){
       const confirmedPivot=barIndex-pivotRadius;
       if(confirmedPivot>=pivotRadius&&points[barIndex].is_closed){
         const pivotHigh=points[confirmedPivot].high;
+        const macdCycle=positiveMacdCycleByIndex[confirmedPivot];
         let isSwingHigh=true;
         for(let neighbor=confirmedPivot-pivotRadius;neighbor<=confirmedPivot+pivotRadius;neighbor++){
           if(neighbor!==confirmedPivot&&points[neighbor].high>=pivotHigh){isSwingHigh=false;break;}
         }
-        if(isSwingHigh)activeSwingHigh={index:confirmedPivot,price:pivotHigh};
+        if(isSwingHigh&&macdCycle!==null&&!cyclesWithHigh.has(macdCycle)){
+          cyclesWithHigh.add(macdCycle);activeSwingHigh={index:confirmedPivot,price:pivotHigh};
+        }
       }
       const previous=points[barIndex-1],current=points[barIndex];
       if(activeSwingHigh&&barIndex>=buyStart&&current.is_closed&&previous&&previous.close<=activeSwingHigh.price&&current.close>activeSwingHigh.price){

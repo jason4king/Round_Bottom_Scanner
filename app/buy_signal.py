@@ -72,25 +72,37 @@ def _build_points(chart: pd.DataFrame, tail_window: int) -> list[dict[str, Any]]
 
 
 def _latest_daily_prior_high_breakout(points: list[dict[str, Any]], buy_start: int, radius: int = 5) -> float | None:
-    """Return the confirmed prior swing high broken by the latest daily close.
+    """Return the first confirmed swing high in a positive-MACD cycle if broken.
 
-    This mirrors the chart's daily prior-high logic: a pivot needs five bars
-    on each side, the breakout is a close crossing above that pivot, and only
-    bars in the configured buy lookback can trigger a signal.
+    A MACD-positive cycle contributes only its first confirmed swing high.
+    The latest closed bar must cross above the active reference high.
     """
     if len(points) < 2 * radius + 2 or len(points) - 1 < buy_start:
         return None
-    search_start = max(radius, buy_start - radius * 2)
+    positive_cycle = -1
+    previous_positive = False
+    cycle_by_index: list[int | None] = []
+    for point in points:
+        positive = point["macd_hist"] > 0
+        if positive and not previous_positive:
+            positive_cycle += 1
+        previous_positive = positive
+        cycle_by_index.append(positive_cycle if positive else None)
+
+    search_start = radius
     active_high: float | None = None
+    cycles_with_high: set[int] = set()
     for bar_index in range(search_start, len(points)):
         confirmed_pivot = bar_index - radius
         if confirmed_pivot >= radius:
             pivot_high = points[confirmed_pivot]["high"]
+            macd_cycle = cycle_by_index[confirmed_pivot]
             is_swing_high = all(
                 neighbor == confirmed_pivot or points[neighbor]["high"] < pivot_high
                 for neighbor in range(confirmed_pivot - radius, confirmed_pivot + radius + 1)
             )
-            if is_swing_high:
+            if is_swing_high and macd_cycle is not None and macd_cycle not in cycles_with_high:
+                cycles_with_high.add(macd_cycle)
                 active_high = pivot_high
         previous, current = points[bar_index - 1], points[bar_index]
         if (
@@ -226,7 +238,7 @@ def evaluate_signal(repository, symbol: str, timeframe: str) -> BuySignal | None
     order_blocks = calculate_market_structure(chart, pivot_radius=STRUCTURE_RADIUS[timeframe])["order_blocks"]
 
     buy_lookback = BUY_LOOKBACK[timeframe]
-    points = _build_points(chart, buy_lookback + 20)
+    points = _build_points(chart, max(buy_lookback + 20, 300) if timeframe == "daily" else buy_lookback + 20)
     n = len(points)
     if n == 0:
         return None
