@@ -24,6 +24,7 @@ LABELS = {
     "trend_pullback": "趋势回踩",
     "rsi_v_bottom_buy": "V底确认",
     "rsi_breakout_buy": "买点确认",
+    "prior_high_breakout": "突破前高（站上EMA144/EMA200）",
 }
 
 
@@ -58,6 +59,7 @@ def _build_points(chart: pd.DataFrame, tail_window: int) -> list[dict[str, Any]]
             "open": float(row["open"]), "high": float(row["high"]),
             "low": float(row["low"]), "close": float(row["Close"]),
             "ema12": float(row["EMA12"]), "ema144": float(row["EMA144"]), "ema169": float(row["EMA169"]),
+            "ema200": float(row["EMA200"]),
             "rsi": float(row["RSI10"]) if pd.notna(row["RSI10"]) else None,
             "rsi_v_bottom_buy": bool(row["RSI_V_BOTTOM_BUY"]),
             "rsi_breakout_buy": bool(row["RSI_BREAKOUT_BUY"]),
@@ -67,6 +69,39 @@ def _build_points(chart: pd.DataFrame, tail_window: int) -> list[dict[str, Any]]
             "bullish_order_block_distance_pct": float(row["BULLISH_OB_DISTANCE_PCT"]) if pd.notna(row["BULLISH_OB_DISTANCE_PCT"]) else None,
         })
     return points
+
+
+def _latest_daily_prior_high_breakout(points: list[dict[str, Any]], buy_start: int, radius: int = 5) -> float | None:
+    """Return the confirmed prior swing high broken by the latest daily close.
+
+    This mirrors the chart's daily prior-high logic: a pivot needs five bars
+    on each side, the breakout is a close crossing above that pivot, and only
+    bars in the configured buy lookback can trigger a signal.
+    """
+    if len(points) < 2 * radius + 2 or len(points) - 1 < buy_start:
+        return None
+    search_start = max(radius, buy_start - radius * 2)
+    active_high: float | None = None
+    for bar_index in range(search_start, len(points)):
+        confirmed_pivot = bar_index - radius
+        if confirmed_pivot >= radius:
+            pivot_high = points[confirmed_pivot]["high"]
+            is_swing_high = all(
+                neighbor == confirmed_pivot or points[neighbor]["high"] < pivot_high
+                for neighbor in range(confirmed_pivot - radius, confirmed_pivot + radius + 1)
+            )
+            if is_swing_high:
+                active_high = pivot_high
+        previous, current = points[bar_index - 1], points[bar_index]
+        if (
+            active_high is not None and bar_index >= buy_start
+            and previous["close"] <= active_high and current["close"] > active_high
+        ):
+            broken_high = active_high
+            active_high = None
+            if bar_index == len(points) - 1:
+                return broken_high
+    return None
 
 
 def _is_main_buy_candidate(points: list[dict], order_blocks: list[dict], index: int) -> bool:
@@ -199,6 +234,23 @@ def evaluate_signal(repository, symbol: str, timeframe: str) -> BuySignal | None
     last_index = n - 1
     last = points[last_index]
 
+    if timeframe == "daily":
+        prior_high = _latest_daily_prior_high_breakout(points, buy_start)
+        if prior_high is not None and last["close"] > last["ema144"] and last["close"] > last["ema200"]:
+            return BuySignal(
+                timeframe=timeframe,
+                signal_type="prior_high_breakout",
+                label=LABELS["prior_high_breakout"],
+                timestamp=last["time"].isoformat(),
+                last_price=last["close"],
+                details={
+                    "rsi": last["rsi"],
+                    "prior_high": prior_high,
+                    "ema144": last["ema144"],
+                    "ema200": last["ema200"],
+                },
+            )
+
     trend_start_times = _trend_start_times(points, order_blocks, buy_start)
     pullback_reversal_times = _pullback_reversal_times(points, buy_start)
     trend_pullback_times = _trend_pullback_times(points, buy_start)
@@ -270,7 +322,11 @@ def build_wecom_message(symbol: str, signal: BuySignal, total_score: float, trig
         f"触发因子：{'+'.join(triggered_factors) if triggered_factors else '无'}",
     ]
     d = signal.details
-    if signal.signal_type == "rsi_breakout_buy":
+    if signal.signal_type == "prior_high_breakout":
+        lines.append(
+            f"前期高点 {d['prior_high']:.2f}；EMA144 {d['ema144']:.2f}；EMA200 {d['ema200']:.2f}"
+        )
+    elif signal.signal_type == "rsi_breakout_buy":
         if d.get("neckline_price") is not None and d.get("stop_level") is not None:
             lines.append(f"颈线 {d['neckline_price']:.2f}　止损 {d['stop_level']:.2f}")
         if d.get("first_low_price") is not None and d.get("second_low_price") is not None:

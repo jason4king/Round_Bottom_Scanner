@@ -50,7 +50,7 @@ def add_indicators(frame: pd.DataFrame) -> pd.DataFrame:
             bars[column] = prices.loc[valid, column].astype(float)
     if bars.empty:
         raise ValueError("No valid OHLC bars remain after filtering invalid price rows")
-    for period in (12, 144, 169, 576, 676):
+    for period in (12, 144, 169, 200, 576, 676):
         bars[f"EMA{period}"] = bars["Close"].ewm(span=period, adjust=False).mean()
     bars["RSI10"] = _wilder_rsi(bars["Close"], 10)
     bars["RSI_SIGNAL10"] = bars["RSI10"].rolling(10).mean()
