@@ -381,7 +381,7 @@ export default function PriceChart({ symbol, onBarsChange }: { symbol: string; o
         if(wave.invalidation_price!==null){const y=candles.priceToCoordinate(wave.invalidation_price);if(y!==null){context.strokeStyle="#ff5252";context.setLineDash([7,5]);context.beginPath();context.moveTo(lastX!,y);context.lineTo(width,y);context.stroke();context.setLineDash([]);context.fillStyle="#ff8589";context.font="10px Inter, sans-serif";context.textAlign="right";context.fillText(`INVALID ${wave.invalidation_price.toFixed(2)}`,width-6,y-4)}}
       }
       payload.market_structure.levels.forEach((level)=>{
-        if(level.kind==="weak_high")return;
+        if(level.kind==="weak_high"||level.kind==="strong_high")return;
         const start=instance.timeScale().timeToCoordinate(Math.floor(new Date(level.start_timestamp).getTime()/1000) as UTCTimestamp), y=candles.priceToCoordinate(level.price);
         if(start===null||y===null)return; context.strokeStyle=level.kind.endsWith("low")?"#2dbfa0":"#ef626c"; context.fillStyle=context.strokeStyle;
         context.setLineDash([8,7]); context.beginPath(); context.moveTo(start,y); context.lineTo(width,y); context.stroke(); context.setLineDash([]);
