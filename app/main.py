@@ -261,6 +261,7 @@ def get_latest_results() -> list[ScanResultItem]:
         (symbol, timeframe, json.loads(details_json))
         for symbol, timeframe, factor_id, details_json in factor_rows
         if factor_id == "F9" and (symbol, timeframe) in f3_timeframes
+        and json.loads(details_json).get("base_type") != "double_bottom"
     ]
     breakout_patterns: dict[str, list[dict]] = {}
     timeframe_order = {"weekly": 1, "daily": 2, "4hour": 3}

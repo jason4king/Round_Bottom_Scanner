@@ -528,23 +528,12 @@ def detect_f8(b: pd.DataFrame) -> FactorResult:
 
 
 def detect_f9(b: pd.DataFrame) -> FactorResult:
-    """Observe CAN SLIM-style cup/handle, double-bottom and flat-base pivots."""
+    """Observe CAN SLIM-style cup/handle and flat-base pivots."""
     if len(b)<35:return _result("F9","Base Breakout",b,False,{"reason":"insufficient_history","required":35,"actual":len(b),"scored":False})
     candidates=[]; current=float(b.Close.iloc[-1]); prior_volume=float(b.Volume.iloc[-21:-1].mean()); volume_ratio=float(b.Volume.iloc[-1])/prior_volume if prior_volume else 0.0
     cup=detect_f7(b)
     if cup.triggered:
         candidates.append({"base_type":"cup_handle","stage":cup.details["stage"],"pivot_price":float(cup.details["breakout_level"]),"confidence":float(cup.details["confidence"]),"source_factor":"F7"})
-    w=b.iloc[-min(120,len(b)):]; lows=w.Low.to_numpy(float); highs=w.High.to_numpy(float); low_pivots=_pivots(lows,3,False)
-    for right in reversed(low_pivots):
-        for left in reversed([p for p in low_pivots if 10<=right-p<=60]):
-            left_low=float(lows[left]);right_low=float(lows[right]);undercut=(left_low-right_low)/left_low
-            neckline=float(np.max(highs[left:right+1]));depth=neckline/min(left_low,right_low)-1
-            if -.02<=undercut<=.08 and .08<=depth<=.35 and right<=len(w)-3:
-                stage="breakout_confirmed" if current>=neckline*1.005 and volume_ratio>=1.5 else "breakout_ready" if current>=neckline*.97 else "base_forming"
-                confidence=min(100,55+min(depth/.20,1)*20+min(max(undercut,0)/.05,1)*10+min(volume_ratio/1.5,1)*15)
-                candidates.append({"base_type":"double_bottom","stage":stage,"pivot_price":neckline,"confidence":confidence,"left_low_price":left_low,"right_low_price":right_low,"undercut_pct":undercut*100,"depth_pct":depth*100})
-                break
-        if any(c["base_type"]=="double_bottom" for c in candidates):break
     for length in (15,20,25,30,35):
         if len(b)<length+1:continue
         base=b.iloc[-length-1:-1];top=float(base.High.max());bottom=float(base.Low.min());range_pct=top/bottom-1 if bottom else np.inf

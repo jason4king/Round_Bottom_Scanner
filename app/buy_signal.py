@@ -63,6 +63,7 @@ def _build_points(chart: pd.DataFrame, tail_window: int) -> list[dict[str, Any]]
             "rsi_breakout_buy": bool(row["RSI_BREAKOUT_BUY"]),
             "rsi_enhanced_buy": bool(row["RSI_ENHANCED_BUY"]),
             "rsi_bullish_divergence": bool(row["RSI_BULL_DIVERGENCE"]),
+            "macd_hist": float(row["MACD_XD_HIST"]),
             "bullish_order_block_distance_pct": float(row["BULLISH_OB_DISTANCE_PCT"]) if pd.notna(row["BULLISH_OB_DISTANCE_PCT"]) else None,
         })
     return points
@@ -113,6 +114,34 @@ def _trend_start_times(points: list[dict], order_blocks: list[dict], buy_start: 
             crossed_long_trend and price_confirmed and long_trend_extension <= 0.05
             and p["ema12"] > previous["ema12"] and p["rsi"] is not None and 40 <= p["rsi"] <= 70
             and candle_gain <= 0.04 and recent_support
+        ):
+            times.add(p["time"])
+    times.update(_pullback_reversal_times(points, buy_start))
+    return times
+
+
+def _pullback_reversal_times(points: list[dict], buy_start: int) -> set:
+    """Find a confirmed reversal after a declining doji and shrinking MACD bars."""
+    times = set()
+    for index in range(max(2, buy_start), len(points)):
+        p, previous, two_bars_ago = points[index], points[index - 1], points[index - 2]
+        doji_after_decline = any(
+            candle["high"] > candle["low"]
+            and abs(candle["close"] - candle["open"]) / (candle["high"] - candle["low"]) <= 0.15
+            and candle_index >= 2
+            and candle["close"] < points[candle_index - 2]["close"]
+            for candle_index, candle in enumerate(points[max(buy_start, index - 3):index], max(buy_start, index - 3))
+        )
+        macd_negative_bars_shrinking = (
+            p["macd_hist"] < 0 and previous["macd_hist"] < 0 and two_bars_ago["macd_hist"] < 0
+            and p["macd_hist"] > previous["macd_hist"] > two_bars_ago["macd_hist"]
+        )
+        ema12_turned_up = p["ema12"] > previous["ema12"] and previous["ema12"] <= two_bars_ago["ema12"]
+        bullish_confirmation = p["close"] > p["open"] or p["close"] > previous["close"]
+        recovered_short_and_long_trend = p["close"] > p["ema12"] and p["close"] >= p["ema144"]
+        if (
+            doji_after_decline and macd_negative_bars_shrinking and ema12_turned_up
+            and bullish_confirmation and recovered_short_and_long_trend
         ):
             times.add(p["time"])
     return times
@@ -171,6 +200,7 @@ def evaluate_signal(repository, symbol: str, timeframe: str) -> BuySignal | None
     last = points[last_index]
 
     trend_start_times = _trend_start_times(points, order_blocks, buy_start)
+    pullback_reversal_times = _pullback_reversal_times(points, buy_start)
     trend_pullback_times = _trend_pullback_times(points, buy_start)
     is_main_candidate = _is_main_buy_candidate(points, order_blocks, last_index)
 
@@ -210,7 +240,11 @@ def evaluate_signal(repository, symbol: str, timeframe: str) -> BuySignal | None
             "order_block_confluence": bool(row["RSI_ORDER_BLOCK_CONFLUENCE"]),
         })
     elif signal_type == "trend_start":
-        details.update({"ema144": last["ema144"], "ema169": last["ema169"]})
+        details.update({
+            "ema144": last["ema144"],
+            "ema169": last["ema169"],
+            "trend_confirmation": "pullback_reversal" if last["time"] in pullback_reversal_times else "ema_cross",
+        })
     elif signal_type == "trend_pullback":
         details.update({"ema144": last["ema144"]})
 
@@ -248,7 +282,10 @@ def build_wecom_message(symbol: str, signal: BuySignal, total_score: float, trig
             lines.append(f"止损 {d['stop_level']:.2f}")
         lines.append(f"支撑类型：{'订单块' if d.get('order_block_confluence') else '极度超卖/维加斯通道'}")
     elif signal.signal_type == "trend_start":
-        lines.append("EMA12 上穿长期通道（EMA144/169）")
+        if d.get("trend_confirmation") == "pullback_reversal":
+            lines.append("下跌十字星后 MACD 负柱连续缩短；EMA12 掉头向上，收盘重新站上 EMA12 和 EMA144")
+        else:
+            lines.append("EMA12 上穿长期通道（EMA144/169）")
         if d.get("rsi") is not None:
             lines.append(f"RSI {d['rsi']:.1f}")
     elif signal.signal_type == "trend_pullback":

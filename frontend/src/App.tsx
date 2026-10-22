@@ -255,7 +255,7 @@ export default function App() {
                 <span className="stock-score">{row.hasResult ? row.total_score.toFixed(0) : "—"}</span>
                 <span className={`data-state ${row.data_status === "正常" ? "good" : ""}`}>{row.data_status === "正常"?t("normal"):row.data_status === "等待扫描"?t("waitingScan"):row.data_status}</span>
                 {row.f7_pattern&&<span className={`f7-badge ${row.f7_pattern.stage}`}><b>F7</b><span>{t(`f7.${row.f7_pattern.stage}`)}</span><em>{t(row.f7_pattern.timeframe==="4hour"?"fourHour":row.f7_pattern.timeframe)} · {row.f7_pattern.confidence.toFixed(0)}%</em></span>}
-                {row.breakout_patterns.slice(0,1).map(pattern=><span className={`breakout-badge ${pattern.stage}`} key={`${pattern.timeframe}-${pattern.base_type}`}><b>{pattern.buy_candidate?"买点":"观察"}</b><span>{{cup_handle:"杯柄",double_bottom:"W双底",flat_base:"平底"}[pattern.base_type]}</span><em>{t(pattern.timeframe==="4hour"?"fourHour":pattern.timeframe)} · 枢轴 {pattern.pivot_price.toFixed(2)}</em></span>)}
+                {row.breakout_patterns.slice(0,1).map(pattern=><span className={`breakout-badge ${pattern.stage}`} key={`${pattern.timeframe}-${pattern.base_type}`}><b>{pattern.buy_candidate?"买点":"观察"}</b><span>{{cup_handle:"杯柄",flat_base:"平底"}[pattern.base_type]}</span><em>{t(pattern.timeframe==="4hour"?"fourHour":pattern.timeframe)} · 枢轴 {pattern.pivot_price.toFixed(2)}</em></span>)}
               </div>
             ))}
           </div>

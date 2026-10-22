@@ -181,7 +181,24 @@ export default function PriceChart({ symbol, onBarsChange }: { symbol: string; o
         return recent.low<=tunnelTop*1.02&&recent.low>=tunnelBottom*.95;
       });
       const recentSupport=recentOrderBlockSupport||recentLongTunnelSupport;
-      if(crossedLongTrend&&priceConfirmed&&longTrendExtension<=.05&&p.ema12>previous.ema12&&p.rsi!==null&&p.rsi>=40&&p.rsi<=70&&candleGain<=.04&&recentSupport)trendStartTimes.add(Number(p.time));
+      const establishedTrendStart=crossedLongTrend&&priceConfirmed&&longTrendExtension<=.05&&p.ema12>previous.ema12&&p.rsi!==null&&p.rsi>=40&&p.rsi<=70&&candleGain<=.04&&recentSupport;
+      let dojiAfterDecline=false;
+      if(index>=2){
+        const dojiStart=Math.max(buyStart,index-3);
+        for(let dojiIndex=dojiStart;dojiIndex<index;dojiIndex++){
+          const doji=points[dojiIndex];
+          const range=doji.high-doji.low;
+          const body=Math.abs(doji.close-doji.open);
+          if(range>0&&body<=range*.15&&doji.close<points[dojiIndex-2].close){dojiAfterDecline=true;break;}
+        }
+      }
+      const twoBarsAgo= index>=2 ? points[index-2] : undefined;
+      const macdNegativeBarsShrinking=twoBarsAgo!==undefined&&p.macd_hist<0&&previous.macd_hist<0&&twoBarsAgo.macd_hist<0&&p.macd_hist>previous.macd_hist&&previous.macd_hist>twoBarsAgo.macd_hist;
+      const ema12TurnedUp=twoBarsAgo!==undefined&&p.ema12>previous.ema12&&previous.ema12<=twoBarsAgo.ema12;
+      const bullishConfirmation=p.close>p.open||p.close>previous.close;
+      const recoveredShortAndLongTrend=p.close>p.ema12&&p.close>=p.ema144;
+      const confirmedPullbackReversal=dojiAfterDecline&&macdNegativeBarsShrinking&&ema12TurnedUp&&bullishConfirmation&&recoveredShortAndLongTrend;
+      if(establishedTrendStart||confirmedPullbackReversal)trendStartTimes.add(Number(p.time));
     });
     const trendPullbackTimes=new Set<number>();
     points.forEach((p,index)=>{

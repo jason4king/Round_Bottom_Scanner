@@ -407,6 +407,7 @@ def run_research(settings: Settings, output_dir: Path, config: ResearchConfig | 
     all_predictions: dict[int, list[pd.DataFrame]] = {h: [] for h in HORIZONS}
     fold_summaries: list[dict[str, object]] = []
     scanner_md_rows: list[str] = []
+    probability_md_rows: list[str] = []
     used_folds = 0
     for fold_number, (start, end) in enumerate(_make_folds(dates, config), 1):
         fold_had_predictions = False
@@ -572,6 +573,8 @@ def run_research(settings: Settings, output_dir: Path, config: ResearchConfig | 
         )
         selection = _score_top_fraction(pred, config)
         momentum_selection = _score_top_fraction(pred, config, "momentum_predicted_return")
+        probability_selection = _score_top_fraction(pred, config, "probability_close_up")
+        momentum_probability_selection = _score_top_fraction(pred, config, "momentum_probability_close_up")
         if not scanner_scores.empty:
             pred = pred.merge(
                 scanner_scores[["symbol", "signal_date", "scanner_score", "scan_run_id"]],
@@ -605,10 +608,20 @@ def run_research(settings: Settings, output_dir: Path, config: ResearchConfig | 
             **selection,
             "momentum_top_bucket_mean_net_return": momentum_selection["top_bucket_mean_net_return"],
             "momentum_top_bucket_win_rate_net": momentum_selection["top_bucket_win_rate_net"],
+            "logistic_probability_top_bucket_mean_net_return": probability_selection["top_bucket_mean_net_return"],
+            "logistic_probability_top_bucket_win_rate_net": probability_selection["top_bucket_win_rate_net"],
+            "momentum_probability_top_bucket_mean_net_return": momentum_probability_selection["top_bucket_mean_net_return"],
+            "momentum_probability_top_bucket_win_rate_net": momentum_probability_selection["top_bucket_win_rate_net"],
             "scanner_same_sample_comparison": scanner_comparison,
             "predictions_file": predictions_path.name,
         }
         summary["horizons"][str(horizon)] = horizon_summary
+        probability_md_rows.append(
+            f"| {horizon} | {probability_selection['top_bucket_mean_net_return']:.2%} | "
+            f"{probability_selection['top_bucket_win_rate_net']:.2%} | "
+            f"{momentum_probability_selection['top_bucket_mean_net_return']:.2%} | "
+            f"{momentum_probability_selection['top_bucket_win_rate_net']:.2%} |"
+        )
         md.append(
             f"| {horizon} 日 | {len(pred)} | {return_metrics['mae_model']:.4f} / {return_metrics['mae_train_mean']:.4f} / {horizon_summary['mae_momentum']:.4f} "
             f"| {class_metrics['brier_model']:.4f} / {class_metrics['brier_base_rate']:.4f} / {horizon_summary['brier_momentum']:.4f} "
@@ -616,6 +629,14 @@ def run_research(settings: Settings, output_dir: Path, config: ResearchConfig | 
             f"| {selection['top_bucket_mean_net_return']:.4f} / {horizon_summary['momentum_top_bucket_mean_net_return']:.4f} "
             f"| {selection['market_mean_net_return']:.4f} |"
         )
+    md.extend([
+        "",
+        "## Logistic probability ranking (top 10% per date)",
+        "",
+        "| Horizon | Logistic mean net return | Logistic win rate | Momentum probability mean net return | Momentum win rate |",
+        "|---:|---:|---:|---:|---:|",
+        *probability_md_rows,
+    ])
     md.extend(["", "## 解释与限制", ""])
     md.extend([
         "### Same-sample scanner comparison",
