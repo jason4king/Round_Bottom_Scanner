@@ -159,7 +159,7 @@ export default function PriceChart({ symbol, onBarsChange }: { symbol: string; o
         activeSwingHigh=null;
       }
     }
-    const displayedPriorHighBreakouts=priorHighBreakouts.slice(-3);
+    const displayedPriorHighBreakouts=priorHighBreakouts.slice(-1);
     const nearDisplayedBullishBlock=(low:number,time:UTCTimestamp,maxDistance=.02)=>payload.market_structure.order_blocks.some((block)=>{
       if(block.bias!=="bullish")return false;
       const confirmedAt=Math.floor(new Date(block.confirmed_at_timestamp).getTime()/1000);
@@ -258,7 +258,7 @@ export default function PriceChart({ symbol, onBarsChange }: { symbol: string; o
     priceMarkers.push(...displayedPriorHighBreakouts.map((breakout)=>({
       time:points[breakout.breakIndex].time,
       position:"aboveBar" as const,
-      color:"#42d7b5",
+      color:"#f27ca8",
       shape:"arrowUp" as const,
       text:t("previousHighBreakout"),
     })));
@@ -375,8 +375,8 @@ export default function PriceChart({ symbol, onBarsChange }: { symbol: string; o
       displayedPriorHighBreakouts.forEach((breakout)=>{
         const start=instance.timeScale().timeToCoordinate(points[breakout.pivotIndex].time),y=candles.priceToCoordinate(breakout.price);
         if(start===null||y===null)return;
-        context.strokeStyle="#42d7b5";context.lineWidth=1.5;context.setLineDash([6,5]);context.beginPath();context.moveTo(start,y);context.lineTo(width,y);context.stroke();context.setLineDash([]);
-        context.fillStyle="#42d7b5";context.font="11px Inter, Microsoft YaHei, sans-serif";context.textAlign="right";
+        context.strokeStyle="#f27ca8";context.lineWidth=1.5;context.setLineDash([6,5]);context.beginPath();context.moveTo(start,y);context.lineTo(width,y);context.stroke();context.setLineDash([]);
+        context.fillStyle="#f27ca8";context.font="11px Inter, Microsoft YaHei, sans-serif";context.textAlign="right";
         context.fillText(`${t("previousHighBreakout")} ${breakout.price.toFixed(2)}`,width-8,Math.max(12,y-5));
       });
     };
