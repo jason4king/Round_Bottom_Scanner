@@ -148,9 +148,7 @@ export default function PriceChart({ symbol, onBarsChange }: { symbol: string; o
       previousMacdPositive=positive;
       return positive?positiveMacdCycle:null;
     });
-    const cyclesWithHigh=new Set<number>();
-    let activeSwingHigh:{index:number;price:number}|null=null;
-    const priorHighBreakouts:{pivotIndex:number;breakIndex:number;price:number}[]=[];
+    const swingHighByMacdCycle=new Map<number,{index:number;price:number;confirmedAt:number}>();
     for(let barIndex=breakoutSearchStart;barIndex<points.length;barIndex++){
       const confirmedPivot=barIndex-pivotRadius;
       if(confirmedPivot>=pivotRadius&&points[barIndex].is_closed){
@@ -160,10 +158,21 @@ export default function PriceChart({ symbol, onBarsChange }: { symbol: string; o
         for(let neighbor=confirmedPivot-pivotRadius;neighbor<=confirmedPivot+pivotRadius;neighbor++){
           if(neighbor!==confirmedPivot&&points[neighbor].high>=pivotHigh){isSwingHigh=false;break;}
         }
-        if(isSwingHigh&&macdCycle!==null&&!cyclesWithHigh.has(macdCycle)){
-          cyclesWithHigh.add(macdCycle);activeSwingHigh={index:confirmedPivot,price:pivotHigh};
+        if(isSwingHigh&&macdCycle!==null){
+          const cycleHigh=swingHighByMacdCycle.get(macdCycle);
+          if(!cycleHigh||pivotHigh>cycleHigh.price){
+            swingHighByMacdCycle.set(macdCycle,{index:confirmedPivot,price:pivotHigh,confirmedAt:barIndex});
+          }
         }
       }
+    }
+    const highsConfirmedAt=new Map<number,{index:number;price:number}>();
+    for(const high of swingHighByMacdCycle.values())highsConfirmedAt.set(high.confirmedAt,{index:high.index,price:high.price});
+    let activeSwingHigh:{index:number;price:number}|null=null;
+    const priorHighBreakouts:{pivotIndex:number;breakIndex:number;price:number}[]=[];
+    for(let barIndex=breakoutSearchStart;barIndex<points.length;barIndex++){
+      const newlyConfirmedHigh=highsConfirmedAt.get(barIndex);
+      if(newlyConfirmedHigh)activeSwingHigh=newlyConfirmedHigh;
       const previous=points[barIndex-1],current=points[barIndex];
       if(activeSwingHigh&&barIndex>=buyStart&&current.is_closed&&previous&&previous.close<=activeSwingHigh.price&&current.close>activeSwingHigh.price){
         priorHighBreakouts.push({pivotIndex:activeSwingHigh.index,breakIndex:barIndex,price:activeSwingHigh.price});
