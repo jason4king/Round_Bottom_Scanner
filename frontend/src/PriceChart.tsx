@@ -138,6 +138,28 @@ export default function PriceChart({ symbol, onBarsChange }: { symbol: string; o
     rsiStop.setData(points.filter((p)=>p.rsi_stop_level!==null).map((p)=>({time:p.time,value:p.rsi_stop_level!})));
     const buyLookback:Record<Timeframe,number>={weekly:52,daily:100,"4hour":120};
     const buyStart=Math.max(0,points.length-buyLookback[timeframe]);
+    const swingRadius:Record<Timeframe,number>={weekly:3,daily:5,"4hour":5};
+    const pivotRadius=swingRadius[timeframe];
+    const breakoutSearchStart=Math.max(pivotRadius, buyStart-pivotRadius*2);
+    let activeSwingHigh:{index:number;price:number}|null=null;
+    const priorHighBreakouts:{pivotIndex:number;breakIndex:number;price:number}[]=[];
+    for(let barIndex=breakoutSearchStart;barIndex<points.length;barIndex++){
+      const confirmedPivot=barIndex-pivotRadius;
+      if(confirmedPivot>=pivotRadius&&points[barIndex].is_closed){
+        const pivotHigh=points[confirmedPivot].high;
+        let isSwingHigh=true;
+        for(let neighbor=confirmedPivot-pivotRadius;neighbor<=confirmedPivot+pivotRadius;neighbor++){
+          if(neighbor!==confirmedPivot&&points[neighbor].high>=pivotHigh){isSwingHigh=false;break;}
+        }
+        if(isSwingHigh)activeSwingHigh={index:confirmedPivot,price:pivotHigh};
+      }
+      const previous=points[barIndex-1],current=points[barIndex];
+      if(activeSwingHigh&&barIndex>=buyStart&&current.is_closed&&previous&&previous.close<=activeSwingHigh.price&&current.close>activeSwingHigh.price){
+        priorHighBreakouts.push({pivotIndex:activeSwingHigh.index,breakIndex:barIndex,price:activeSwingHigh.price});
+        activeSwingHigh=null;
+      }
+    }
+    const displayedPriorHighBreakouts=priorHighBreakouts.slice(-3);
     const nearDisplayedBullishBlock=(low:number,time:UTCTimestamp,maxDistance=.02)=>payload.market_structure.order_blocks.some((block)=>{
       if(block.bias!=="bullish")return false;
       const confirmedAt=Math.floor(new Date(block.confirmed_at_timestamp).getTime()/1000);
@@ -233,6 +255,13 @@ export default function PriceChart({ symbol, onBarsChange }: { symbol: string; o
       shape:"arrowUp" as const,
       text:t(trendStartTimes.has(Number(p.time))?"trendStartBuy":trendPullbackTimes.has(Number(p.time))?"trendPullbackBuy":p.rsi_v_bottom_buy?"rsiVBottomBuy":"rsiBreakoutBuy"),
     }));
+    priceMarkers.push(...displayedPriorHighBreakouts.map((breakout)=>({
+      time:points[breakout.breakIndex].time,
+      position:"aboveBar" as const,
+      color:"#42d7b5",
+      shape:"arrowUp" as const,
+      text:t("previousHighBreakout"),
+    })));
     createSeriesMarkers(candles,priceMarkers);
     const rsi = rsiInstance.addSeries(LineSeries, { color:"#9b7de3", lineWidth:2, priceLineVisible:false, lastValueVisible:true });
     const rsiSignal = rsiInstance.addSeries(LineSeries, { color:"#d6ad42", lineWidth:1, priceLineVisible:false, lastValueVisible:true });
@@ -342,6 +371,13 @@ export default function PriceChart({ symbol, onBarsChange }: { symbol: string; o
         if(start===null||y===null)return; context.strokeStyle=level.kind.endsWith("low")?"#2dbfa0":"#ef626c"; context.fillStyle=context.strokeStyle;
         context.setLineDash([8,7]); context.beginPath(); context.moveTo(start,y); context.lineTo(width,y); context.stroke(); context.setLineDash([]);
         context.font="11px Inter, Microsoft YaHei, sans-serif"; context.textAlign="right"; context.fillText(t(`structure.${level.kind}`),width-8,Math.max(12,y-5));
+      });
+      displayedPriorHighBreakouts.forEach((breakout)=>{
+        const start=instance.timeScale().timeToCoordinate(points[breakout.pivotIndex].time),y=candles.priceToCoordinate(breakout.price);
+        if(start===null||y===null)return;
+        context.strokeStyle="#42d7b5";context.lineWidth=1.5;context.setLineDash([6,5]);context.beginPath();context.moveTo(start,y);context.lineTo(width,y);context.stroke();context.setLineDash([]);
+        context.fillStyle="#42d7b5";context.font="11px Inter, Microsoft YaHei, sans-serif";context.textAlign="right";
+        context.fillText(`${t("previousHighBreakout")} ${breakout.price.toFixed(2)}`,width-8,Math.max(12,y-5));
       });
     };
     const resizeObserver=new ResizeObserver(drawStructure); resizeObserver.observe(host.current); requestAnimationFrame(drawStructure);
