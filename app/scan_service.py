@@ -148,6 +148,18 @@ class ScanService:
                                 merged = self.repository.merge(symbol, tf, bars, replace_session=session_mismatch)
                                 self._save_manifest(symbol, tf, merged)
                         except Exception as exc:
+                            error_text = str(exc)
+                            if (
+                                tf == "4hour"
+                                and not cached.empty
+                                and "301603" in error_text
+                                and "no quote" in error_text.lower()
+                            ):
+                                print(
+                                    f"{symbol} 4hour refresh returned no quote; "
+                                    f"continuing with {len(cached)} cached bars"
+                                )
+                                continue
                             symbol_error = f"{tf}: {exc}"
                             errors.append({"symbol": symbol, "stage": "sync", "message": symbol_error})
                             with self.database.connect() as c:
